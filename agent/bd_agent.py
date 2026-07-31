@@ -12,7 +12,7 @@ Usage:
     python bd_agent.py --conference ASH ASCO --year 2025 2026 \
         --indication "bladder cancer" --phase "Phase II" \
         --sender-name "Dr. Darren Brennan" --sender-title "Medical Director" \
-        --sender-company "Your Imaging CRO" \
+        --sender-company "Elevate Imaging" \
         --output leads_report.md
 """
 
@@ -55,14 +55,36 @@ contact email (company press releases, IR pages, LinkedIn, or the company \
 available, say so explicitly rather than guessing one.
 
 4. For each lead, draft a short, professional preliminary outreach email \
-(120-180 words) from {args.sender_name}, {args.sender_title} at \
-{args.sender_company}, introducing the CRO's imaging services and \
-referencing the specific trial result to show relevance. The email should:
-   - Open with a specific, genuine reference to their recently presented data
-   - Briefly state what the CRO does (central imaging review / endpoint \
-adjudication / imaging biomarkers for oncology trials)
+from {args.sender_name}, {args.sender_title} at {args.sender_company}. The \
+email MUST open with exactly this template, with the bracketed placeholders \
+filled in from your research (do not paraphrase or restructure this opening \
+— fill in the placeholders and keep the wording and sentence structure as-is):
+
+    Dear [contact name],
+
+    I read with interest your recent paper, "[abstract title]" (Abstract \
+#[abstract number]), at [meeting name] on [presentation date]. \
+Congratulations on this exciting result.
+
+    Given this, I wanted to introduce our imaging CRO, {args.sender_company}, \
+as a potential imaging vendor as you progress [drug/asset name] through its \
+next stage of development.
+
+If the contact's name is unknown, use "Dr. [Last Name]" if you have a last \
+name, otherwise "Hello" instead of "Dear [contact name]". If the exact \
+presentation date isn't available, use the conference dates or omit that \
+clause gracefully. If the abstract number isn't available, reference the \
+abstract title alone. Never fabricate a name, date, or abstract number — \
+omit what you can't verify rather than guessing.
+
+After that opening, add 2-4 more sentences that:
+   - Briefly state what {args.sender_company} does (central imaging review / \
+endpoint adjudication / imaging biomarkers for oncology trials)
    - Suggest a short call, with no hard sell
-   - Be addressed to the CMO if identified, otherwise a general BD contact
+   - Close with a professional sign-off from {args.sender_name}, \
+{args.sender_title}, {args.sender_company}
+
+Address the email to the CMO if identified, otherwise a general BD/IR contact.
 
 Output format — Markdown, one section per lead, in this exact structure:
 
@@ -132,7 +154,7 @@ def main() -> None:
     parser.add_argument("--phase", default="Phase II", help="Trial phase")
     parser.add_argument("--sender-name", default="[Your Name]", help="Your name for the draft emails")
     parser.add_argument("--sender-title", default="[Your Title]", help="Your title for the draft emails")
-    parser.add_argument("--sender-company", default="[Your Imaging CRO]", help="Your CRO's name for the draft emails")
+    parser.add_argument("--sender-company", default="Elevate Imaging", help="Your CRO's name for the draft emails")
     parser.add_argument("--output", "-o", default="leads_report.md", help="Output markdown file path")
     args = parser.parse_args()
 

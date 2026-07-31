@@ -33,14 +33,23 @@ python bd_agent.py \
   --phase "Phase II" \
   --sender-name "Dr. Darren Brennan" \
   --sender-title "Medical Director" \
-  --sender-company "Your Imaging CRO Name" \
+  --sender-company "Elevate Imaging" \
   --output leads_report.md
 ```
 
 This prints progress to the terminal and writes a Markdown report
-(`leads_report.md` by default) with one section per lead: the trial result,
-the company contact (only real, found contacts — it will never invent an
-email), and a draft outreach email.
+(`leads_report.md` by default, plain text/Markdown — nothing is sent) with
+one section per lead: the trial result, the company contact (only real,
+found contacts — it will never invent an email), and a draft outreach email
+that always opens with:
+
+> Dear [contact name], I read with interest your recent paper, "[abstract
+> title]" (Abstract #[abstract number]), at [meeting name] on [presentation
+> date]. Congratulations on this exciting result. Given this, I wanted to
+> introduce our imaging CRO, Elevate Imaging, as a potential imaging vendor
+> as you progress [drug/asset name] through its next stage of development.
+
+The script never sends anything — you review and send each draft yourself.
 
 Each run costs API usage (a few dollars per run at typical depth, since it
 does many web searches over an extended research task).
