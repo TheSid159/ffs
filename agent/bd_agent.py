@@ -47,6 +47,11 @@ clinically meaningful, or practice-changing).
    - The sponsoring biotech or pharmaceutical company
    - A one- to two-sentence summary of the efficacy result and why it's positive
    - The conference, year, and abstract/presentation number if available
+   - A direct URL to the abstract or presentation (the conference's online \
+itinerary/abstract-search page, ASCO's Meeting Library, ESMO's congress \
+resource library, the AUA app/abstract archive, or a company press release \
+that links to it). If you cannot find a working direct link, use the \
+company's press release announcing the data instead, and say so.
 
 3. For each company found, search for its current CEO and/or Chief Medical \
 Officer (CMO), and any publicly available business-development or investor \
@@ -91,6 +96,8 @@ Output format — Markdown, one section per lead, in this exact structure:
 ## [Company Name] — [Trial/Drug Name]
 
 **Trial:** [name/NCT] | **Conference:** [conf, year] | **Result:** [1-2 sentence summary]
+
+**Abstract:** [Abstract title/number](URL) — or "no direct link found" if none exists
 
 **Contact:** [Name, Title] — [email or "not publicly available"]
 
