@@ -11,6 +11,9 @@ Business development lead-finder for an imaging CRO. It:
 3. Renders a preliminary outreach email per lead from a **fixed template**
    (defined in Python, not left to the model to reproduce), always opening
    with a reference to the specific trial result.
+4. Remembers what it's already shown you (`seen_leads.json`, created
+   automatically next to the report) so re-running doesn't resurface the
+   same leads every time.
 
 ## Setup
 
@@ -81,7 +84,5 @@ does many web searches over an extended research task) plus Hunter.io usage
 ## Next steps to consider
 
 - Point it at other indications/phases by changing the flags.
-- Wire the output into a CRM or spreadsheet instead of a flat Markdown file.
-- Add persistence so repeated runs don't resurface leads you've already
-  worked.
+- Wire the output into HubSpot instead of a flat Markdown file.
 - Add a step that cross-checks trial results against ClinicalTrials.gov.

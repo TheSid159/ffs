@@ -31,6 +31,7 @@ from typing import Optional
 import anthropic
 
 import hunter_contacts
+import seen_leads
 
 MODEL = "claude-opus-5"
 JSON_FENCE_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
@@ -236,7 +237,14 @@ def draft_email(lead: dict, contact, args: argparse.Namespace):
     return subject, body
 
 
-def render_report(preamble: str, enriched_leads: list, excluded: list, args: argparse.Namespace, hunter_enabled: bool) -> str:
+def render_report(
+    preamble: str,
+    enriched_leads: list,
+    excluded: list,
+    args: argparse.Namespace,
+    hunter_enabled: bool,
+    repeat_leads: Optional[list] = None,
+) -> str:
     conferences = " and ".join(args.conference)
     years = ", ".join(str(y) for y in args.year)
 
@@ -315,6 +323,20 @@ def render_report(preamble: str, enriched_leads: list, excluded: list, args: arg
         for item in excluded:
             lines.append(f"- **{item.get('company_name', 'Unknown')}** — {item.get('reason', '')}")
 
+    if repeat_leads:
+        lines += [
+            "",
+            "## Already shown in a previous report (skipped here)",
+            "",
+            "_These matched a lead from an earlier run and were left out to avoid "
+            "repeating leads you've already reviewed. Delete `seen_leads.json` if "
+            "you want everything to resurface._",
+            "",
+        ]
+        for lead, first_seen in repeat_leads:
+            title = lead.get("drug_asset_name") or lead.get("trial_name", "")
+            lines.append(f"- **{lead.get('company_name', 'Unknown')}** — {title} (first seen {first_seen})")
+
     return "\n".join(lines)
 
 
@@ -346,6 +368,17 @@ def main() -> None:
         help="Milliseconds to wait between Hunter.io API calls (default: 4000, i.e. 15/min — "
         "Hunter's stated free-tier limit). Lower this if your plan's actual limit is per-second, not per-minute.",
     )
+    parser.add_argument(
+        "--seen-file",
+        default="seen_leads.json",
+        help="Path to the local dedup file (default: seen_leads.json, next to the report). "
+        "Leads already recorded here are skipped in future runs.",
+    )
+    parser.add_argument(
+        "--no-dedup",
+        action="store_true",
+        help="Show every lead this run, even ones already recorded in --seen-file, and don't update it.",
+    )
     args = parser.parse_args()
 
     raw_response = run_research(args)
@@ -363,19 +396,36 @@ def main() -> None:
         print(f"Saved report to {out_path.resolve()}", file=sys.stderr)
         return
 
-    print(f"\n\nLooking up {len(leads)} contact(s) via Hunter.io..." if args.hunter_api_key else "", file=sys.stderr)
-    enriched = enrich_contacts(leads, args.hunter_api_key, args.hunter_min_confidence, args.hunter_delay_ms / 1000)
+    seen_path = Path(args.seen_file)
+    repeat_leads = []
+    if args.no_dedup:
+        new_leads = leads
+    else:
+        seen = seen_leads.load_seen(seen_path)
+        new_leads, repeat_leads = seen_leads.split_new_and_repeats(leads, seen)
+        seen_leads.save_seen(seen_path, seen)
+        if repeat_leads:
+            print(
+                f"[{len(repeat_leads)} of {len(leads)} lead(s) already appeared in a "
+                f"previous report — skipping them. See {seen_path.resolve()}]",
+                file=sys.stderr,
+            )
+
+    print(f"\n\nLooking up {len(new_leads)} contact(s) via Hunter.io..." if args.hunter_api_key else "", file=sys.stderr)
+    enriched = enrich_contacts(new_leads, args.hunter_api_key, args.hunter_min_confidence, args.hunter_delay_ms / 1000)
 
     failed = [(lead, contact) for lead, contact in enriched if contact and contact.source.startswith("error")]
     if failed:
         print(
             f"[Warning: Hunter.io lookup FAILED (not just 'no match') for "
-            f"{len(failed)} of {len(leads)} companies — see the ⚠️ lines in the "
+            f"{len(failed)} of {len(new_leads)} companies — see the ⚠️ lines in the "
             f"report. First error: {failed[0][1].source}]",
             file=sys.stderr,
         )
 
-    report = render_report(preamble, enriched, excluded, args, hunter_enabled=bool(args.hunter_api_key))
+    report = render_report(
+        preamble, enriched, excluded, args, hunter_enabled=bool(args.hunter_api_key), repeat_leads=repeat_leads
+    )
     out_path.write_text(report, encoding="utf-8")
     print(f"Saved report to {out_path.resolve()}", file=sys.stderr)
 

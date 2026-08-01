@@ -4,3 +4,4 @@ __pycache__/
 run*.log
 leads_report*.md
 run_windows.bat
+seen_leads.json

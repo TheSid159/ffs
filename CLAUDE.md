@@ -42,7 +42,7 @@ integration commit for the pattern.
 
 ## Architecture
 
-Two modules, no application framework:
+Three modules, no application framework:
 
 - **`agent/bd_agent.py`** — the pipeline, in four stages:
   1. `build_prompt()` renders one research prompt from the CLI args
@@ -83,6 +83,29 @@ Contact lookup is **optional** — if `HUNTER_API_KEY` isn't set,
 `enrich_contacts()` returns `None` for every contact and the report says
 so explicitly rather than silently omitting the caveat.
 
+- **`agent/seen_leads.py`** — local dedup so re-running doesn't resurface
+  the same leads. `dedup_key()` deliberately prefers `company_domain` +
+  `abstract_number` over `company_name`/`trial_name`: Claude's exact
+  wording for those free-text fields varies between runs even for the
+  identical underlying trial (observed directly — same enGene/LEGEND
+  trial came back with two differently-phrased company names and trial
+  descriptions across two consecutive runs), so keying on them would
+  silently fail to dedup. `main()` calls `split_new_and_repeats()` before
+  Hunter enrichment (repeats never consume a Hunter lookup) and
+  `render_report()` lists skipped repeats in their own section rather than
+  dropping them silently. State lives in `--seen-file` (default
+  `seen_leads.json`, gitignored — it's per-user run state, not code).
+
+### Hunter.io requires a browser-like User-Agent
+
+`hunter_contacts._get()` sets an explicit `User-Agent` header on every
+request. This is load-bearing, not cosmetic: Hunter's front end sits behind
+Cloudflare, and Python's default `Python-urllib/x.y` User-Agent gets
+fingerprinted and blocked (Cloudflare error 1010) before the request ever
+reaches Hunter's actual API — this was misread as a plan/rate-limit problem
+before the real cause was found. Don't strip this header when touching
+`_get()`.
+
 ### The fixed email opening
 
 The draft email's opening paragraph is a hard requirement embedded verbatim
@@ -107,14 +130,27 @@ complete-looking report.
 
 ### Known gaps (not yet implemented)
 
-- No persistence/dedup across runs — every invocation is independent, so
-  repeated runs can resurface the same leads.
 - Hunter.io's Domain Search only surfaces contacts Hunter has already
   crawled/indexed for that domain — smaller biotechs with thin public web
   presence may still come back with no confirmed contact. This is a data
   availability limit, not a bug; the report should say "not confirmed"
   rather than papering over it.
-- Output is a flat Markdown file; there's no CRM/spreadsheet integration.
+- Output is a flat Markdown file; no HubSpot integration yet. Planned
+  design (not yet built): when a lead is drafted, create/update it as a
+  Contact + Company in HubSpot with an "Outreach Status" property
+  (`Contacted` initially); before future research runs, exclude companies
+  already marked `Declined` in HubSpot (deliberately narrower than "ever
+  contacted" — a `No Response` company should still be able to resurface
+  for a later follow-up). Actual email sending and reply tracking are
+  intended to go through Outlook (desktop, via `pywin32` COM automation —
+  no new credentials needed) with HubSpot's native inbox-connection
+  feature handling conversation logging, not custom code.
+- Windows users have a `run_windows.bat.example` template (copy to
+  `run_windows.bat`, fill in real keys, gitignored) so they can
+  double-click instead of using a terminal — added after `set` env vars in
+  PowerShell repeatedly failed to persist across windows/copy-paste in
+  practice. Batch files need **unquoted** `set VAR=value` — quotes become
+  part of the value and silently break auth.
 
 ## Generated output is not tracked
 
