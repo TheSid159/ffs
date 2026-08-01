@@ -2,14 +2,17 @@
 """
 Business development lead-finder for an imaging CRO.
 
-Searches recent ASH / ASCO conference presentations for trials matching a
-given phase, indication, and result criteria, identifies the sponsoring
-biotech/pharma company and its CEO/CMO contact, and drafts a preliminary
-outreach email for each lead.
+Searches recent conference presentations for trials matching a given phase,
+indication, and result criteria, using Claude with web search. Claude
+returns structured lead data (company, trial, abstract link); this script
+then looks up a verified CEO/CMO contact via Hunter.io (gated on a minimum
+confidence score, so a low-confidence guess is never reported as confirmed)
+and renders a preliminary outreach email per lead from a fixed template.
 
 Usage:
     export ANTHROPIC_API_KEY=sk-ant-...
-    python bd_agent.py --conference ASH ASCO --year 2025 2026 \
+    export HUNTER_API_KEY=...          # optional — omit to skip contact lookup
+    python bd_agent.py --conference "ASCO GU" ASCO ESMO AUA --year 2025 2026 \
         --indication "bladder cancer" --phase "Phase II" \
         --sender-name "Dr. Darren Brennan" --sender-title "Medical Director" \
         --sender-company "Elevate Imaging" \
@@ -17,12 +20,19 @@ Usage:
 """
 
 import argparse
+import json
+import os
+import re
 import sys
 from pathlib import Path
+from typing import Optional
 
 import anthropic
 
+import hunter_contacts
+
 MODEL = "claude-opus-5"
+JSON_FENCE_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 
 
 def build_prompt(args: argparse.Namespace) -> str:
@@ -34,93 +44,84 @@ Research Organization (CRO) called "{args.sender_company}". The CRO provides \
 imaging services (central image review, endpoint assessment, imaging \
 biomarkers) to biotech and pharmaceutical sponsors running clinical trials.
 
-Task — do the following, in order, using web search:
+Task — do the following, using web search:
 
 1. Search for {args.phase} clinical trial results in {args.indication} that \
-were presented at the {conferences} annual meeting(s) in {years}. \
-Only include trials with a POSITIVE primary result (met its primary \
-endpoint, or the presenters/company described the result as positive, \
-clinically meaningful, or practice-changing).
+were presented at the {conferences} annual meeting(s) in {years}. Only \
+include trials with a POSITIVE primary result (met its primary endpoint, or \
+the presenters/company described the result as positive, clinically \
+meaningful, or practice-changing).
 
 2. For each qualifying trial, identify:
    - Trial name / identifier (e.g. NCT number) and drug/investigational agent name
-   - The sponsoring biotech or pharmaceutical company
+   - The sponsoring biotech or pharmaceutical company, and its primary \
+website domain (e.g. "protaratx.com" — no "https://" or "www.")
    - A one- to two-sentence summary of the efficacy result and why it's positive
-   - The conference, year, and abstract/presentation number if available
-   - A direct URL to the abstract or presentation (the conference's online \
-itinerary/abstract-search page, ASCO's Meeting Library, ESMO's congress \
-resource library, the AUA app/abstract archive, or a company press release \
-that links to it). If you cannot find a working direct link, use the \
-company's press release announcing the data instead, and say so.
+   - The conference name/year and, if available, the exact presentation \
+date, abstract title, and abstract/presentation number
+   - A direct URL to the abstract or presentation if you can find one \
+(conference abstract library, ASCO Meeting Library, ESMO congress resource \
+library, AUA abstract archive); otherwise a company press release URL \
+announcing the data, noted as such
+   - The name and title of the company's CEO or CMO, ONLY if you happen to \
+encounter it naturally while researching the trial (e.g. named in a press \
+release, or as a quoted spokesperson). Do not spend extra search effort \
+specifically hunting for this — a dedicated, verified contact lookup \
+happens separately after your research, so this field is a bonus, not a \
+requirement.
 
-3. For each company found, search for its current CEO and/or Chief Medical \
-Officer (CMO), and any publicly available business-development or investor \
-contact email (company press releases, IR pages, LinkedIn, or the company \
-"contact us" page often have this). If no direct email is publicly \
-available, say so explicitly rather than guessing one.
+3. Also list any trials/companies you reviewed but excluded, and why (e.g. \
+result was not clearly positive, no commercial sponsor, wrong indication or \
+phase).
 
-4. For each lead, draft a short, professional preliminary outreach email \
-from {args.sender_name}, {args.sender_title} at {args.sender_company}. The \
-email MUST open with exactly this template, with the bracketed placeholders \
-filled in from your research (do not paraphrase or restructure this opening \
-— fill in the placeholders and keep the wording and sentence structure as-is):
+Do not fabricate anything — trial results, names, dates, abstract numbers, \
+or URLs. Omit a field (use null) rather than guess it.
 
-    Dear [contact name],
+Output format — TWO parts, in this exact order:
 
-    I read with interest your recent paper, "[abstract title]" (Abstract \
-#[abstract number]), at [meeting name] on [presentation date]. \
-Congratulations on this exciting result.
+PART 1 — a short prose section (a few sentences) noting your search scope \
+and any caveats (e.g. if a conference doesn't cover this indication, or you \
+ran low on search budget).
 
-    Given this, I wanted to introduce our imaging CRO, {args.sender_company}, \
-as a potential imaging vendor as you progress [drug/asset name] through its \
-next stage of development.
+PART 2 — after all prose, output exactly one fenced code block starting \
+with ```json and ending with ```, containing a single JSON object with \
+this exact shape and nothing else inside the fence:
 
-If the contact's name is unknown, use "Dr. [Last Name]" if you have a last \
-name, otherwise "Hello" instead of "Dear [contact name]". If the exact \
-presentation date isn't available, use the conference dates or omit that \
-clause gracefully. If the abstract number isn't available, reference the \
-abstract title alone. Never fabricate a name, date, or abstract number — \
-omit what you can't verify rather than guessing.
+{{
+  "leads": [
+    {{
+      "company_name": "...",
+      "company_domain": "..." or null,
+      "trial_name": "...",
+      "drug_asset_name": "...",
+      "conference_name": "...",
+      "presentation_date": "..." or null,
+      "result_summary": "...",
+      "abstract_title": "...",
+      "abstract_number": "..." or null,
+      "abstract_url": "..." or null,
+      "abstract_url_note": "..." or null,
+      "contact_name": "..." or null,
+      "contact_title": "..." or null
+    }}
+  ],
+  "excluded": [
+    {{"company_name": "...", "reason": "..."}}
+  ]
+}}
 
-After that opening, add 2-4 more sentences that:
-   - Briefly state what {args.sender_company} does (central imaging review / \
-endpoint adjudication / imaging biomarkers for oncology trials)
-   - Suggest a short call, with no hard sell
-   - Close with a professional sign-off from {args.sender_name}, \
-{args.sender_title}, {args.sender_company}
-
-Address the email to the CMO if identified, otherwise a general BD/IR contact.
-
-Output format — Markdown, one section per lead, in this exact structure:
-
-## [Company Name] — [Trial/Drug Name]
-
-**Trial:** [name/NCT] | **Conference:** [conf, year] | **Result:** [1-2 sentence summary]
-
-**Abstract:** [Abstract title/number](URL) — or "no direct link found" if none exists
-
-**Contact:** [Name, Title] — [email or "not publicly available"]
-
-**Draft email:**
-
-> Subject: [subject line]
->
-> [email body]
-
----
-
-If you cannot find any qualifying trials, say so plainly rather than \
-inventing results. Do not fabricate contact emails — only report ones found \
-via search, and clearly flag when a contact could not be confirmed.
+If you cannot find any qualifying trials, return an empty "leads" array and \
+explain why in PART 1 rather than inventing results.
 """
 
 
-def run(args: argparse.Namespace) -> str:
+def run_research(args: argparse.Namespace) -> str:
+    """Send the research prompt to Claude and return the full streamed response."""
     client = anthropic.Anthropic()
     prompt = build_prompt(args)
 
     full_text_parts = []
-    print("Researching trials and drafting leads (this can take a few minutes)...\n", file=sys.stderr)
+    print("Researching trials (this can take a few minutes)...\n", file=sys.stderr)
 
     with client.messages.stream(
         model=MODEL,
@@ -153,6 +154,153 @@ def run(args: argparse.Namespace) -> str:
     return "".join(full_text_parts)
 
 
+def parse_research_output(text: str):
+    """Split Claude's response into (prose_preamble, leads, excluded).
+
+    Falls back to (text, [], []) if the JSON block is missing or malformed,
+    so a bad response still produces a readable file instead of crashing.
+    """
+    matches = list(JSON_FENCE_RE.finditer(text))
+    if not matches:
+        return text, [], []
+    block = matches[-1]
+    preamble = text[: block.start()].strip()
+    try:
+        data = json.loads(block.group(1))
+    except json.JSONDecodeError:
+        return text, [], []
+    return preamble, data.get("leads") or [], data.get("excluded") or []
+
+
+def enrich_contacts(leads: list, api_key: Optional[str], min_confidence: int):
+    """Return [(lead, Contact | None)] — Contact is None if lookup was skipped."""
+    enriched = []
+    for lead in leads:
+        if not api_key:
+            enriched.append((lead, None))
+            continue
+        contact = hunter_contacts.find_contact(
+            domain=lead.get("company_domain"),
+            contact_name=lead.get("contact_name"),
+            api_key=api_key,
+            min_confidence=min_confidence,
+        )
+        enriched.append((lead, contact))
+    return enriched
+
+
+def draft_email(lead: dict, contact, args: argparse.Namespace):
+    """Render the fixed-template outreach email. Returns (subject, body)."""
+    contact_name = (contact.name if contact and contact.name else None) or lead.get("contact_name")
+    if contact and contact.email and contact_name:
+        salutation = f"Dear {contact_name},"
+    elif contact_name:
+        last_name = contact_name.strip().split()[-1]
+        salutation = f"Dear Dr. {last_name},"
+    else:
+        salutation = "Hello,"
+
+    abstract_ref = f'"{lead.get("abstract_title", lead.get("trial_name", "your recent presentation"))}"'
+    if lead.get("abstract_number"):
+        abstract_ref += f' (Abstract #{lead["abstract_number"]})'
+
+    date_clause = f' on {lead["presentation_date"]}' if lead.get("presentation_date") else ""
+    conference = lead.get("conference_name", "the conference")
+    asset = lead.get("drug_asset_name") or lead.get("trial_name", "this asset")
+
+    body = (
+        f"{salutation}\n\n"
+        f"I read with interest your recent paper, {abstract_ref}, at {conference}"
+        f"{date_clause}. Congratulations on this exciting result.\n\n"
+        f"Given this, I wanted to introduce our imaging CRO, {args.sender_company}, "
+        f"as a potential imaging vendor as you progress {asset} through its next "
+        f"stage of development.\n\n"
+        f"{args.sender_company} provides central image review, blinded "
+        f"independent endpoint adjudication and imaging biomarker services for "
+        f"oncology trials. If it would be useful, I would welcome a short "
+        f"introductory call at your convenience — no obligation either way.\n\n"
+        f"Best regards,\n\n{args.sender_name}\n{args.sender_title}, {args.sender_company}"
+    )
+    subject = f"Imaging CRO introduction — {asset}"
+    return subject, body
+
+
+def render_report(preamble: str, enriched_leads: list, excluded: list, args: argparse.Namespace, hunter_enabled: bool) -> str:
+    conferences = " and ".join(args.conference)
+    years = ", ".join(str(y) for y in args.year)
+
+    lines = [
+        f"# {args.indication.title()} — BD Leads for {args.sender_company}",
+        "",
+        f"**Scope searched:** {conferences} ({years}), {args.phase} trials with positive results.",
+        "",
+    ]
+    if preamble:
+        lines += [preamble, ""]
+    if not hunter_enabled:
+        lines += [
+            "_Contact lookup via Hunter.io was skipped (no `HUNTER_API_KEY` "
+            "provided) — contacts below are only what Claude found during "
+            "research, unverified._",
+            "",
+        ]
+    lines.append("---")
+
+    for lead, contact in enriched_leads:
+        title = lead.get("drug_asset_name") or lead.get("trial_name", "")
+        lines += ["", f"## {lead.get('company_name', 'Unknown company')} — {title}", ""]
+        lines.append(
+            f"**Trial:** {lead.get('trial_name', '')} | "
+            f"**Conference:** {lead.get('conference_name', '')} | "
+            f"**Result:** {lead.get('result_summary', '')}"
+        )
+        lines.append("")
+
+        if lead.get("abstract_url"):
+            note = f" — {lead['abstract_url_note']}" if lead.get("abstract_url_note") else ""
+            lines.append(f"**Abstract:** [{lead.get('abstract_title', 'link')}]({lead['abstract_url']}){note}")
+        else:
+            lines.append("**Abstract:** no direct link found")
+        lines.append("")
+
+        if contact and contact.email:
+            title_part = f", {contact.title}" if contact.title else ""
+            lines.append(
+                f"**Contact:** {contact.name or lead.get('contact_name', 'Unknown')}{title_part} — "
+                f"{contact.email} _(Hunter.io confidence: {contact.confidence}/100)_"
+            )
+        elif contact and contact.confidence is not None:
+            lines.append(
+                f"**Contact:** not confirmed — Hunter.io found a possible match at "
+                f"{contact.confidence}/100 confidence, below the "
+                f"{args.hunter_min_confidence}/100 threshold. Verify manually before sending."
+            )
+        elif lead.get("contact_name"):
+            title_part = f", {lead['contact_title']}" if lead.get("contact_title") else ""
+            lines.append(f"**Contact:** {lead['contact_name']}{title_part} — email not confirmed")
+        else:
+            lines.append("**Contact:** not publicly available")
+        lines.append("")
+
+        subject, body = draft_email(lead, contact, args)
+        lines.append("**Draft email:**")
+        lines.append("")
+        lines.append(f"> Subject: {subject}")
+        lines.append(">")
+        for paragraph in body.split("\n\n"):
+            lines.append("> " + paragraph.replace("\n", "\n> "))
+            lines.append(">")
+        lines.append("")
+        lines.append("---")
+
+    if excluded:
+        lines += ["", "## Reviewed but NOT included (and why)", ""]
+        for item in excluded:
+            lines.append(f"- **{item.get('company_name', 'Unknown')}** — {item.get('reason', '')}")
+
+    return "\n".join(lines)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--conference", nargs="+", default=["ASH", "ASCO"], help="Conference(s) to search (default: ASH ASCO)")
@@ -163,13 +311,40 @@ def main() -> None:
     parser.add_argument("--sender-title", default="[Your Title]", help="Your title for the draft emails")
     parser.add_argument("--sender-company", default="Elevate Imaging", help="Your CRO's name for the draft emails")
     parser.add_argument("--output", "-o", default="leads_report.md", help="Output markdown file path")
+    parser.add_argument(
+        "--hunter-api-key",
+        default=os.environ.get("HUNTER_API_KEY"),
+        help="Hunter.io API key for verified contact lookup (env: HUNTER_API_KEY). Omit to skip contact lookup.",
+    )
+    parser.add_argument(
+        "--hunter-min-confidence",
+        type=int,
+        default=90,
+        help="Minimum Hunter.io confidence score (0-100) required to report an email as confirmed (default: 90)",
+    )
     args = parser.parse_args()
 
-    report = run(args)
+    raw_response = run_research(args)
+    preamble, leads, excluded = parse_research_output(raw_response)
 
     out_path = Path(args.output)
+
+    if not leads and not excluded:
+        out_path.write_text(raw_response, encoding="utf-8")
+        print(
+            "\n\n[Warning: could not parse structured lead data from the response — "
+            "saved the raw response instead]",
+            file=sys.stderr,
+        )
+        print(f"Saved report to {out_path.resolve()}", file=sys.stderr)
+        return
+
+    print(f"\n\nLooking up {len(leads)} contact(s) via Hunter.io..." if args.hunter_api_key else "", file=sys.stderr)
+    enriched = enrich_contacts(leads, args.hunter_api_key, args.hunter_min_confidence)
+
+    report = render_report(preamble, enriched, excluded, args, hunter_enabled=bool(args.hunter_api_key))
     out_path.write_text(report, encoding="utf-8")
-    print(f"\n\nSaved report to {out_path.resolve()}", file=sys.stderr)
+    print(f"Saved report to {out_path.resolve()}", file=sys.stderr)
 
 
 if __name__ == "__main__":
