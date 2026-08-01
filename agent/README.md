@@ -28,17 +28,22 @@ Business development lead-finder for an imaging CRO. It:
    cd agent
    pip install -r requirements.txt
    ```
-4. Set your API key(s):
-   ```bash
-   cp .env.example .env   # then edit .env with your real key(s)
-   export ANTHROPIC_API_KEY=sk-ant-...
-   export HUNTER_API_KEY=...             # optional
-   # or: set -a; source .env; set +a
-   ```
 
-## Run
+## Run — desktop app (recommended, especially on Windows)
+
+**Double-click `run_gui.bat`** (or run `python gui.py`). A window opens
+where you paste in your API keys and fill in the search fields — no
+terminal, no environment variables, no editing files. Your keys and last-
+used settings are saved locally to `gui_config.json` (gitignored — never
+commit it) and pre-filled next time, so you only type them once. Click
+**Run**, watch progress in the window, then **Open report** when it's done.
+
+## Run — command line (alternative)
 
 ```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+export HUNTER_API_KEY=...             # optional
+
 python bd_agent.py \
   --conference "ASCO GU" ASCO ESMO AUA \
   --year 2025 2026 \
@@ -51,23 +56,19 @@ python bd_agent.py \
   --output leads_report.md
 ```
 
-### Windows — easier alternative to typing commands each time
+On Windows, `run_windows.bat.example` is a template for a double-clickable
+version of this same command (copy to `run_windows.bat`, fill in your keys
+with **no quotes** around them, edit the search-parameter line if wanted).
+The GUI above is the easier option for most day-to-day use; this is here
+for scripting/automation.
 
-Copy `run_windows.bat.example` to `run_windows.bat` in this same folder,
-open it in Notepad, replace the two placeholder API key lines with your
-real keys, and edit the `--conference` / `--year` / etc. line if you want
-different search parameters. Save it. From then on, just **double-click
-`run_windows.bat`** in File Explorer to run the tool — no terminal typing
-required. The window stays open at the end so you can read the result
-before closing it. (`run_windows.bat` is gitignored since it holds your
-real keys — never commit it.)
+## What you get
 
-This prints progress to the terminal and writes a Markdown report
-(`leads_report.md` by default, plain text/Markdown — nothing is sent) with
-one section per lead: the trial result, an abstract/press-release link, the
-verified contact (or an explicit "not confirmed" / "not publicly
-available" — it will never invent an email or a confidence score), and a
-draft outreach email that always opens with:
+Either path writes a Markdown report (`leads_report.md` by default —
+nothing is ever sent) with one section per lead: the trial result, an
+abstract/press-release link, the verified contact (or an explicit "not
+confirmed" / "not publicly available" — it will never invent an email or a
+confidence score), and a draft outreach email that always opens with:
 
 > Dear [contact name], I read with interest your recent paper, "[abstract
 > title]" (Abstract #[abstract number]), at [meeting name] on [presentation
@@ -83,6 +84,6 @@ does many web searches over an extended research task) plus Hunter.io usage
 
 ## Next steps to consider
 
-- Point it at other indications/phases by changing the flags.
+- Point it at other indications/phases via the GUI or CLI flags.
 - Wire the output into HubSpot instead of a flat Markdown file.
 - Add a step that cross-checks trial results against ClinicalTrials.gov.

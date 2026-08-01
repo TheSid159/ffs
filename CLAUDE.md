@@ -9,14 +9,23 @@ Imaging"). It uses the Claude API with the web search tool to find recent
 clinical trials with positive results at named oncology/urology
 conferences, looks up a verified CEO/CMO contact for each company via
 Hunter.io, and drafts an outreach email per lead from a fixed template.
-There is no application server, frontend, or database — it's a small
-Python script run from the terminal that writes a Markdown report.
+There is no application server or database. There are two front ends over
+the same pipeline: a Tkinter desktop GUI (`gui.py`, the primary one — the
+end user is non-technical and terminal/PowerShell friction was a repeated,
+significant source of real problems) and a CLI (`bd_agent.py`) for
+scripting. Both write a Markdown report.
 
 ## Commands
 
 ```bash
 cd agent
 pip install -r requirements.txt
+python gui.py   # primary interface — prompts for API keys in the window, no env vars needed
+```
+
+CLI equivalent (used for scripting, or when developing without a display):
+
+```bash
 export ANTHROPIC_API_KEY=sk-ant-...   # from console.anthropic.com
 export HUNTER_API_KEY=...             # optional, from hunter.io/api-keys — omit to skip contact lookup
 
@@ -32,17 +41,22 @@ python bd_agent.py \
 ```
 
 There is no test suite, linter, or build step — `python -m py_compile
-bd_agent.py hunter_contacts.py` is the only pre-flight check currently used
-before committing changes. Every flag has a default (see `--help`), so the
-script also runs with no arguments for a smoke test. When editing
-`parse_research_output()`, `draft_email()`, or `render_report()`, sanity
-check them with fabricated lead dicts (no network calls needed) rather than
-only testing via a full paid run — see the git history around the Hunter.io
-integration commit for the pattern.
+bd_agent.py hunter_contacts.py seen_leads.py gui_logic.py gui.py` is the
+only pre-flight check currently used before committing changes (`gui.py`
+itself imports `tkinter`, which may not be installed in a headless dev
+environment — a `py_compile` syntax check still passes without it, but
+`gui_logic.py` is where the real, importable-and-testable logic lives; see
+Architecture below). Every CLI flag has a default (see `--help`), so
+`bd_agent.py` also runs with no arguments for a smoke test. When editing
+`parse_research_output()`, `draft_email()`, `render_report()`, or anything
+in `gui_logic.py`, sanity check with fabricated lead dicts and
+`unittest.mock.patch` on `bd_agent.run_research` (no network calls needed)
+rather than only testing via a full paid run — see the git history around
+the Hunter.io integration and GUI commits for the pattern.
 
 ## Architecture
 
-Three modules, no application framework:
+Five modules, no application framework:
 
 - **`agent/bd_agent.py`** — the pipeline, in four stages:
   1. `build_prompt()` renders one research prompt from the CLI args
@@ -96,6 +110,25 @@ so explicitly rather than silently omitting the caveat.
   dropping them silently. State lives in `--seen-file` (default
   `seen_leads.json`, gitignored — it's per-user run state, not code).
 
+- **`agent/gui_logic.py` / `agent/gui.py`** — the GUI is split specifically
+  so most of it is testable without a display: `gui_logic.py` has zero
+  Tkinter import and holds everything meaningful (`build_args()` translates
+  a plain dict of form strings into the same `argparse.Namespace` the CLI
+  builds, `run_pipeline()` mirrors `bd_agent.main()`'s body but returns the
+  report path instead of just printing it, `QueueWriter` is a file-like
+  object for routing `print()`/stdout output into a `queue.Queue`).
+  `gui.py` is a thin Tkinter shell: it redirects `sys.stdout`/`sys.stderr`
+  to a `QueueWriter` before running the pipeline **on a background
+  thread** (network calls would otherwise freeze the window), and only
+  touches Tkinter widgets from `_poll_log_queue()` on the main thread via
+  `after()` — never from the background thread directly, since Tkinter
+  widgets aren't thread-safe. API keys and last-used field values persist
+  in `gui_config.json` (gitignored) so they're entered once, not per run.
+  This module split is deliberate, not incidental — when changing pipeline
+  behavior, prefer editing `gui_logic.run_pipeline()` / `build_args()`
+  (testable here) over inlining logic into `gui.py` (only testable by the
+  user, on their own machine, since this sandbox has no Tkinter/display).
+
 ### Hunter.io requires a browser-like User-Agent
 
 `hunter_contacts._get()` sets an explicit `User-Agent` header on every
@@ -145,12 +178,20 @@ complete-looking report.
   intended to go through Outlook (desktop, via `pywin32` COM automation —
   no new credentials needed) with HubSpot's native inbox-connection
   feature handling conversation logging, not custom code.
-- Windows users have a `run_windows.bat.example` template (copy to
-  `run_windows.bat`, fill in real keys, gitignored) so they can
-  double-click instead of using a terminal — added after `set` env vars in
-  PowerShell repeatedly failed to persist across windows/copy-paste in
-  practice. Batch files need **unquoted** `set VAR=value` — quotes become
-  part of the value and silently break auth.
+- `run_windows.bat.example` (copy to `run_windows.bat`, fill in real keys,
+  gitignored) is a secondary CLI-launcher path, superseded by `gui.py` as
+  the primary interface — added after `set` env vars in PowerShell
+  repeatedly failed to persist across windows/copy-paste in practice.
+  Batch files need **unquoted** `set VAR=value` — quotes become part of
+  the value and silently break auth. Kept around for scripting/automation
+  use, not because it's the recommended path.
+- Manual file-by-file patching via "right-click → Edit → paste" (used
+  before `gui.py` existed, to get fixes onto the user's machine without a
+  git-based update flow) turned out fragile in practice — Notepad's Save
+  As silently appends `.txt` unless "Save as type" is explicitly set to
+  "All Files", and this bit the user more than once (`run_windows.bat`,
+  `seen_leads.py`). If a similar situation recurs, prefer pointing at a
+  fresh full-repo download over incremental single-file patches.
 
 ## Generated output is not tracked
 
