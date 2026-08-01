@@ -242,6 +242,20 @@ paths also route through `app_dir()` for the same reason — a bundled exe's
 working directory isn't reliably its own folder depending on how it's
 launched, but `sys.executable` always is.
 
+### The Anthropic SDK's "Connection error." is deliberately generic
+
+`anthropic.APIConnectionError`'s message is hardcoded to `"Connection
+error."` regardless of cause — but the SDK raises it via `raise
+APIConnectionError(request=request) from err`, so the real httpx/network
+exception (DNS failure, TLS interception by antivirus/corporate proxy,
+connection refused, etc.) is preserved on `.__cause__`. Same class of bug
+as the Hunter.io Cloudflare block below: a vague error hid the real cause
+until surfaced explicitly. `run_research()` catches
+`anthropic.APIConnectionError` and re-raises a `RuntimeError` that includes
+`exc.__cause__`'s text plus the likely real-world causes (internet down,
+firewall/VPN, antivirus HTTPS interception) — don't let that collapse back
+to just re-raising or printing the bare SDK exception.
+
 ### Hunter.io requires a browser-like User-Agent
 
 `hunter_contacts._get()` sets an explicit `User-Agent` header on every

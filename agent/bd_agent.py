@@ -210,33 +210,51 @@ def run_research(args: argparse.Namespace) -> str:
     full_text_parts = []
     print("Researching trials (this can take a few minutes)...\n", file=sys.stderr)
 
-    with client.messages.stream(
-        model=MODEL,
-        max_tokens=32000,
-        thinking={"type": "adaptive", "display": "summarized"},
-        output_config={"effort": "high"},
-        tools=[
-            {
-                "type": "web_search_20260209",
-                "name": "web_search",
-                "max_uses": 30,
-            }
-        ],
-        messages=[{"role": "user", "content": prompt}],
-    ) as stream:
-        for event in stream:
-            if event.type == "content_block_delta" and event.delta.type == "text_delta":
-                sys.stdout.write(event.delta.text)
-                sys.stdout.flush()
-                full_text_parts.append(event.delta.text)
+    try:
+        with client.messages.stream(
+            model=MODEL,
+            max_tokens=32000,
+            thinking={"type": "adaptive", "display": "summarized"},
+            output_config={"effort": "high"},
+            tools=[
+                {
+                    "type": "web_search_20260209",
+                    "name": "web_search",
+                    "max_uses": 30,
+                }
+            ],
+            messages=[{"role": "user", "content": prompt}],
+        ) as stream:
+            for event in stream:
+                if event.type == "content_block_delta" and event.delta.type == "text_delta":
+                    sys.stdout.write(event.delta.text)
+                    sys.stdout.flush()
+                    full_text_parts.append(event.delta.text)
 
-        final_message = stream.get_final_message()
-        if final_message.stop_reason == "pause_turn":
-            print(
-                "\n\n[Note: hit the server-side tool-use pause limit; "
-                "response may be incomplete. Re-run to continue.]",
-                file=sys.stderr,
-            )
+            final_message = stream.get_final_message()
+            if final_message.stop_reason == "pause_turn":
+                print(
+                    "\n\n[Note: hit the server-side tool-use pause limit; "
+                    "response may be incomplete. Re-run to continue.]",
+                    file=sys.stderr,
+                )
+    except anthropic.APIConnectionError as exc:
+        # The SDK's own message is a hardcoded, generic "Connection error." —
+        # it deliberately wraps (via `raise ... from err`) the real httpx/network
+        # exception in __cause__, which is where the actually useful detail is
+        # (DNS failure, TLS/proxy interception, connection refused, etc.). Same
+        # class of bug as the Hunter.io Cloudflare block: a vague error hid the
+        # real cause until it was surfaced explicitly.
+        cause = f" Underlying error: {exc.__cause__}" if exc.__cause__ else ""
+        raise RuntimeError(
+            "Could not reach the Anthropic API (api.anthropic.com)."
+            + cause
+            + " This is almost always your internet connection, a corporate "
+            "firewall/VPN blocking that address, or antivirus/security software "
+            "intercepting HTTPS traffic — not a problem with your API key. Try "
+            "a different network (e.g. a phone hotspot) to check, or ask your "
+            "IT/network admin if api.anthropic.com is blocked."
+        ) from exc
 
     return "".join(full_text_parts)
 
