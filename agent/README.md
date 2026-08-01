@@ -48,6 +48,17 @@ python bd_agent.py \
   --output leads_report.md
 ```
 
+### Windows — easier alternative to typing commands each time
+
+Copy `run_windows.bat.example` to `run_windows.bat` in this same folder,
+open it in Notepad, replace the two placeholder API key lines with your
+real keys, and edit the `--conference` / `--year` / etc. line if you want
+different search parameters. Save it. From then on, just **double-click
+`run_windows.bat`** in File Explorer to run the tool — no terminal typing
+required. The window stays open at the end so you can read the result
+before closing it. (`run_windows.bat` is gitignored since it holds your
+real keys — never commit it.)
+
 This prints progress to the terminal and writes a Markdown report
 (`leads_report.md` by default, plain text/Markdown — nothing is sent) with
 one section per lead: the trial result, an abstract/press-release link, the

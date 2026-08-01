@@ -1,0 +1,27 @@
+@echo off
+REM ============================================================
+REM  How to use this file:
+REM  1. Make a copy of this file in the same folder, named
+REM     "run_windows.bat" (without ".example" at the end).
+REM  2. Open that copy in Notepad and replace the two placeholder
+REM     lines below with your real API keys.
+REM  3. Save it, then just double-click run_windows.bat any time
+REM     you want to run the tool. A window will open, run
+REM     everything, and stay open at the end so you can read the
+REM     result before it closes.
+REM  4. Change the --conference / --year / --indication / --phase
+REM     lines below any time you want to search something different.
+REM ============================================================
+
+cd /d %~dp0
+
+set ANTHROPIC_API_KEY=PUT_YOUR_ANTHROPIC_KEY_HERE
+set HUNTER_API_KEY=PUT_YOUR_HUNTER_KEY_HERE
+
+python bd_agent.py --conference "ASCO GU" --year 2025 --sender-name "Dr. Darren Brennan" --sender-title "Medical Director"
+
+echo.
+echo ============================================================
+echo Done. Press any key to close this window.
+echo ============================================================
+pause >nul

@@ -3,3 +3,4 @@ __pycache__/
 .env
 run*.log
 leads_report*.md
+run_windows.bat
