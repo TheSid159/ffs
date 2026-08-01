@@ -6,3 +6,5 @@ leads_report*.md
 run_windows.bat
 seen_leads.json
 gui_config.json
+build/
+dist/

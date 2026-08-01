@@ -5,12 +5,28 @@ manager to test meaningfully, unlike this module's plain functions).
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import bd_agent
 import seen_leads
 
-CONFIG_PATH = Path(__file__).parent / "gui_config.json"
+
+def app_dir() -> Path:
+    """Directory to store persistent app files in.
+
+    Under a PyInstaller one-file build, `__file__` resolves to the
+    temporary `_MEIxxxxx` extraction folder that's deleted when the process
+    exits — using it for a config path would silently lose saved settings
+    on every single run. `sys.executable` is the actual .exe location in a
+    frozen build; `__file__` is correct for a plain `python gui.py` run.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+    return Path(__file__).parent
+
+
+CONFIG_PATH = app_dir() / "gui_config.json"
 
 
 def load_config(path: Path = CONFIG_PATH) -> dict:
@@ -58,11 +74,11 @@ def build_args(form: dict) -> argparse.Namespace:
         sender_name=form.get("sender_name", "").strip() or "[Your Name]",
         sender_title=form.get("sender_title", "").strip() or "[Your Title]",
         sender_company=form.get("sender_company", "").strip() or "Elevate Imaging",
-        output=form.get("output", "").strip() or "leads_report.md",
+        output=form.get("output", "").strip() or str(app_dir() / "leads_report.md"),
         hunter_api_key=form.get("hunter_api_key", "").strip() or None,
         hunter_min_confidence=hunter_min_confidence,
         hunter_delay_ms=4000,
-        seen_file="seen_leads.json",
+        seen_file=str(app_dir() / "seen_leads.json"),
         no_dedup=False,
     )
 

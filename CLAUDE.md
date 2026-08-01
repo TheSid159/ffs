@@ -129,6 +129,28 @@ so explicitly rather than silently omitting the caveat.
   (testable here) over inlining logic into `gui.py` (only testable by the
   user, on their own machine, since this sandbox has no Tkinter/display).
 
+### `gui.py` can be packaged into a standalone Windows `.exe`
+
+`ElevateImaging-BD-Agent.spec` (committed) drives `pyinstaller
+ElevateImaging-BD-Agent.spec` — see the README's "Build a standalone .exe"
+section for the user-facing steps. This **must be built on Windows**;
+PyInstaller doesn't cross-compile. `build/` and `dist/` are gitignored
+(generated) but the `.spec` is committed so the build config is
+reproducible without retyping flags.
+
+**`gui_logic.app_dir()` exists specifically for this.** Under a PyInstaller
+one-file build, `__file__` resolves to the temporary `_MEIxxxxx`
+extraction folder, which is deleted when the process exits — using it for
+`CONFIG_PATH` would silently lose every saved setting on every single run
+(a real bug caught and fixed before shipping, verified by mocking
+`sys.frozen`/`sys.executable`, since this sandbox can't launch a real
+Windows `.exe` to observe it directly). `app_dir()` checks
+`getattr(sys, "frozen", False)` and uses `Path(sys.executable).parent`
+instead when true. `gui_logic.build_args()`'s default `output`/`seen_file`
+paths also route through `app_dir()` for the same reason — a bundled exe's
+working directory isn't reliably its own folder depending on how it's
+launched, but `sys.executable` always is.
+
 ### Hunter.io requires a browser-like User-Agent
 
 `hunter_contacts._get()` sets an explicit `User-Agent` header on every

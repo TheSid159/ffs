@@ -38,6 +38,24 @@ used settings are saved locally to `gui_config.json` (gitignored — never
 commit it) and pre-filled next time, so you only type them once. Click
 **Run**, watch progress in the window, then **Open report** when it's done.
 
+## Build a standalone `.exe` (no Python needed after this, one-time step)
+
+Turns the GUI into a single double-clickable `.exe` — no Python
+installation, no `pip install`, on this machine or any other you copy it
+to. This has to be built once **on Windows** (a build made on any other OS
+won't run on Windows):
+
+```
+pip install -r requirements-build.txt
+pyinstaller ElevateImaging-BD-Agent.spec
+```
+
+The finished file appears at `dist\ElevateImaging-BD-Agent.exe`. Move it
+wherever you like (Desktop, Start Menu folder, etc.) — it keeps its saved
+settings (`gui_config.json`) and reports right next to wherever that `.exe`
+file itself lives, not wherever you happen to run it from. Re-run the same
+`pyinstaller` command any time the underlying code changes, to rebuild it.
+
 ## Run — command line (alternative)
 
 ```bash
