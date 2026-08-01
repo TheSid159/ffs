@@ -48,8 +48,19 @@ class HunterAPIError(Exception):
 def _get(path: str, params: dict, api_key: str) -> dict:
     query = urllib.parse.urlencode({**params, "api_key": api_key})
     url = f"{HUNTER_BASE_URL}/{path}?{query}"
+    # Python's default urllib User-Agent ("Python-urllib/x.y") gets fingerprinted
+    # and blocked by Hunter's Cloudflare front end (their error code 1010) —
+    # a browser-like User-Agent avoids that entirely.
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+        },
+    )
     try:
-        with urllib.request.urlopen(url, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
+        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
