@@ -36,11 +36,32 @@ class Contact:
     source: str  # "email_finder" | "domain_search" | "none" | "error: ..."
 
 
+class HunterAPIError(Exception):
+    """A non-2xx response from Hunter.io, with their explanation attached.
+
+    Hunter returns a JSON body describing *why* a request was rejected
+    (e.g. plan/endpoint restrictions, invalid key) — a bare HTTP status
+    code alone isn't enough to act on, so this carries that detail through.
+    """
+
+
 def _get(path: str, params: dict, api_key: str) -> dict:
     query = urllib.parse.urlencode({**params, "api_key": api_key})
     url = f"{HUNTER_BASE_URL}/{path}?{query}"
-    with urllib.request.urlopen(url, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(url, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        detail = body.strip()
+        try:
+            errors = json.loads(body).get("errors") or []
+            if errors:
+                first = errors[0]
+                detail = f"{first.get('id', 'error')}: {first.get('details') or first.get('code') or body}"
+        except json.JSONDecodeError:
+            pass
+        raise HunterAPIError(f"HTTP {exc.code} on {path} — {detail}") from None
 
 
 def find_contact(
@@ -99,5 +120,5 @@ def find_contact(
             return Contact(name, best.get("position"), best.get("value"), confidence, "domain_search")
         return Contact(name, best.get("position"), None, confidence, "domain_search")
 
-    except (urllib.error.URLError, json.JSONDecodeError, KeyError) as exc:
+    except (HunterAPIError, urllib.error.URLError, json.JSONDecodeError, KeyError) as exc:
         return Contact(contact_name, None, None, None, f"error: {exc}")
