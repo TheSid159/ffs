@@ -269,6 +269,12 @@ def render_report(preamble: str, enriched_leads: list, excluded: list, args: arg
                 f"**Contact:** {contact.name or lead.get('contact_name', 'Unknown')}{title_part} — "
                 f"{contact.email} _(Hunter.io confidence: {contact.confidence}/100)_"
             )
+        elif contact and contact.source.startswith("error"):
+            lines.append(
+                f"**Contact:** ⚠️ Hunter.io lookup FAILED for this company ({contact.source}) — "
+                f"this is not the same as 'no contact found'; the lookup never completed. "
+                f"Re-run once the issue is resolved before treating this as unconfirmed."
+            )
         elif contact and contact.confidence is not None:
             lines.append(
                 f"**Contact:** not confirmed — Hunter.io found a possible match at "
@@ -341,6 +347,15 @@ def main() -> None:
 
     print(f"\n\nLooking up {len(leads)} contact(s) via Hunter.io..." if args.hunter_api_key else "", file=sys.stderr)
     enriched = enrich_contacts(leads, args.hunter_api_key, args.hunter_min_confidence)
+
+    failed = [(lead, contact) for lead, contact in enriched if contact and contact.source.startswith("error")]
+    if failed:
+        print(
+            f"[Warning: Hunter.io lookup FAILED (not just 'no match') for "
+            f"{len(failed)} of {len(leads)} companies — see the ⚠️ lines in the "
+            f"report. First error: {failed[0][1].source}]",
+            file=sys.stderr,
+        )
 
     report = render_report(preamble, enriched, excluded, args, hunter_enabled=bool(args.hunter_api_key))
     out_path.write_text(report, encoding="utf-8")
