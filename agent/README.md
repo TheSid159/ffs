@@ -6,9 +6,12 @@ Business development lead-finder for an imaging CRO. It:
    cancer type (default: bladder cancer) across eleven signal types: positive
    Phase II trial results at named conferences, conference agenda/keynote/
    late-breaking-abstract highlights (checked against a curated list of
-   major worldwide oncology/urology meetings, plus imaging-science/clinical-
-   ops meetings like SNMMI, RSNA, DIA, and SCOPE Summit), biotech funding
-   rounds, CEO/CMO/CSO leadership changes, new trial registrations on
+   major worldwide oncology/urology/immuno-oncology meetings, plus theranostics/
+   molecular-imaging and clinical-ops meetings like SNMMI, EANM, WMIC, RSNA,
+   DIA, and SCOPE Summit — smaller regional/subspecialty meetings aren't
+   pre-listed, but are actively searched for when they fall in the same
+   window as a major meeting already in scope), biotech funding rounds,
+   CEO/CMO/CSO leadership changes, new trial registrations on
    ClinicalTrials.gov and international equivalents, FDA/EMA regulatory
    designations, End-of-Phase 2/regulatory-meeting milestones, trial
    expansions to new countries/sites, protocol amendments adding imaging

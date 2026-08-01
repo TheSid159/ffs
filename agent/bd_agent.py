@@ -83,6 +83,15 @@ early-phase imaging biomarker data in {args.indication} are strong \
 prospects — they're actively generating imaging endpoints even before a \
 pivotal trial:
 {conferences.format_imaging_clinops_meeting_list()}
+Additionally — do NOT maintain or assume a fixed list of every regional or \
+subspecialty meeting, there are too many to enumerate — but when a major \
+meeting from the lists above is in scope for this search and is coming up \
+soon, actively search for smaller regional or subspecialty meetings \
+happening in roughly the same window (a few weeks before or after). \
+Companies sometimes present early data or make announcements at a smaller \
+regional meeting shortly ahead of a major congress. Only include one you \
+actually find evidence of — don't invent a plausible-sounding regional \
+meeting name.
 
 CATEGORY 3 — "funding": biotech or pharmaceutical companies working in \
 {args.indication} that have recently secured funding — Series B/C+ venture \

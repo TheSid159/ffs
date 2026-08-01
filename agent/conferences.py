@@ -25,11 +25,20 @@ MAJOR_ONCOLOGY_MEETINGS = [
     {"name": "SABCS (San Antonio Breast Cancer Symposium)", "region": "USA", "typical_timing": "December"},
     {"name": "CSCO Annual Meeting (Chinese Society of Clinical Oncology)", "region": "China", "typical_timing": "September"},
     {"name": "JSMO Annual Meeting (Japanese Society of Medical Oncology)", "region": "Japan", "typical_timing": "July"},
+    {"name": "AACR-NCI-EORTC International Conference on Molecular Targets and Cancer Therapeutics", "region": "USA / Europe (alternating)", "typical_timing": "October"},
+    {"name": "Immuno-Oncology 360 Summit", "region": "USA", "typical_timing": "February"},
 ]
 
+# Includes theranostics/molecular-imaging meetings alongside the imaging-CRO
+# clinical-ops ones — SNMMI and EANM are the two meetings that actually
+# dominate the theranostics space (North America and Europe respectively),
+# rather than a standalone "theranostics congress" name we're not fully
+# confident is current/real.
 IMAGING_AND_CLINOPS_MEETINGS = [
     {"name": "SNMMI Annual Meeting (Society of Nuclear Medicine and Molecular Imaging)", "region": "USA", "typical_timing": "June"},
+    {"name": "EANM Annual Congress (European Association of Nuclear Medicine)", "region": "Europe", "typical_timing": "October"},
     {"name": "RSNA Annual Meeting (Radiological Society of North America)", "region": "USA", "typical_timing": "November/December"},
+    {"name": "World Molecular Imaging Congress (WMIC)", "region": "Global", "typical_timing": "September"},
     {"name": "DIA Global Annual Meeting (Drug Information Association)", "region": "USA", "typical_timing": "June"},
     {"name": "SCOPE Summit (Summit for Clinical Ops Executives)", "region": "USA", "typical_timing": "February"},
 ]

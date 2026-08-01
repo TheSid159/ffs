@@ -122,6 +122,18 @@ sensitive category and explicitly forbids naming a specific competing
 vendor unless the source itself already does so, and says to leave it out
 entirely rather than repeat an unverified claim about a real company).
 
+`agent/conferences.py`'s curated lists intentionally stay at the "major
+meeting" level (oncology/urology, immuno-oncology, and theranostics/
+molecular-imaging meetings like SNMMI and EANM) — there are too many
+regional/subspecialty meetings to enumerate and maintain a static list of.
+Instead, `CATEGORY 2` of the prompt tells Claude to actively search for
+smaller regional meetings that fall in the same timeframe as whichever
+major meeting(s) are actually in scope for a given run (e.g. a small
+regional breast cancer meeting happening the same month as ESMO), with an
+explicit "only include one you actually find evidence of — don't invent a
+plausible-sounding regional meeting name" guardrail, same anti-fabrication
+discipline as everywhere else in this prompt.
+
 For `trial_result` and `new_registration` leads specifically, the prompt
 also asks Claude to fold two extra observations into the existing
 `result_summary`/`signal_detail` text rather than adding dedicated fields:
