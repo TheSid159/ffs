@@ -24,6 +24,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -172,19 +173,29 @@ def parse_research_output(text: str):
     return preamble, data.get("leads") or [], data.get("excluded") or []
 
 
-def enrich_contacts(leads: list, api_key: Optional[str], min_confidence: int):
-    """Return [(lead, Contact | None)] — Contact is None if lookup was skipped."""
+def enrich_contacts(leads: list, api_key: Optional[str], min_confidence: int, delay_seconds: float = 4.0):
+    """Return [(lead, Contact | None)] — Contact is None if lookup was skipped.
+
+    Sleeps `delay_seconds` between successive Hunter.io calls to stay under
+    their rate limit. Leads with no `company_domain` never hit the network
+    (see hunter_contacts.find_contact) so they don't consume a delay.
+    """
     enriched = []
+    calls_made = 0
     for lead in leads:
         if not api_key:
             enriched.append((lead, None))
             continue
+        if lead.get("company_domain") and calls_made > 0:
+            time.sleep(delay_seconds)
         contact = hunter_contacts.find_contact(
             domain=lead.get("company_domain"),
             contact_name=lead.get("contact_name"),
             api_key=api_key,
             min_confidence=min_confidence,
         )
+        if lead.get("company_domain"):
+            calls_made += 1
         enriched.append((lead, contact))
     return enriched
 
@@ -328,6 +339,13 @@ def main() -> None:
         default=90,
         help="Minimum Hunter.io confidence score (0-100) required to report an email as confirmed (default: 90)",
     )
+    parser.add_argument(
+        "--hunter-delay-ms",
+        type=int,
+        default=4000,
+        help="Milliseconds to wait between Hunter.io API calls (default: 4000, i.e. 15/min — "
+        "Hunter's stated free-tier limit). Lower this if your plan's actual limit is per-second, not per-minute.",
+    )
     args = parser.parse_args()
 
     raw_response = run_research(args)
@@ -346,7 +364,7 @@ def main() -> None:
         return
 
     print(f"\n\nLooking up {len(leads)} contact(s) via Hunter.io..." if args.hunter_api_key else "", file=sys.stderr)
-    enriched = enrich_contacts(leads, args.hunter_api_key, args.hunter_min_confidence)
+    enriched = enrich_contacts(leads, args.hunter_api_key, args.hunter_min_confidence, args.hunter_delay_ms / 1000)
 
     failed = [(lead, contact) for lead, contact in enriched if contact and contact.source.startswith("error")]
     if failed:
