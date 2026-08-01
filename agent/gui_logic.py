@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import bd_agent
+import conference_dates
 import seen_leads
 
 
@@ -27,6 +28,23 @@ def app_dir() -> Path:
 
 
 CONFIG_PATH = app_dir() / "gui_config.json"
+CONFERENCE_DATES_CACHE_PATH = app_dir() / "conference_dates_cache.json"
+
+
+def upcoming_meetings_banner_text(within_days: int = 45) -> str:
+    """Plain-text summary of upcoming meetings for the GUI banner, reading
+    only the local cache — no network call, so this is safe to call on
+    every launch. Returns "" if there's no cache yet or nothing's upcoming
+    (the caller decides whether to show a "no cache yet" hint instead)."""
+    upcoming = conference_dates.upcoming_meetings(CONFERENCE_DATES_CACHE_PATH, within_days=within_days)
+    if not upcoming:
+        return ""
+    lines = []
+    for m in upcoming:
+        when = f"in {m['days_until']} day(s)" if m["days_until"] > 0 else "now"
+        city = f", {m['city']}" if m.get("city") else ""
+        lines.append(f"{m.get('name', 'Unknown meeting')} starts {when} ({m.get('start_date')}{city})")
+    return "Upcoming: " + " | ".join(lines)
 
 
 def load_config(path: Path = CONFIG_PATH) -> dict:

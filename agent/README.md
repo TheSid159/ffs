@@ -47,6 +47,13 @@ used settings are saved locally to `gui_config.json` (gitignored — never
 commit it) and pre-filled next time, so you only type them once. Click
 **Run**, watch progress in the window, then **Open report** when it's done.
 
+At the top of the window is a **Conference Calendar** banner that flags
+any major meeting starting within the next 45 days, so you know when it's
+worth running a targeted search ahead of a specific conference. It only
+shows real, confirmed dates — click **Refresh Dates** to look them up
+(a small, separate API call, not run automatically) whenever you want an
+update; the banner just reads the last lookup otherwise, at no extra cost.
+
 ## Build a standalone `.exe` (no Python needed after this, one-time step)
 
 Turns the GUI into a single double-clickable `.exe` — no Python

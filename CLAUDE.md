@@ -246,6 +246,24 @@ so explicitly rather than silently omitting the caveat.
   was the tell. The `year` field still splits on whitespace deliberately —
   years never contain internal spaces, so that's not the same bug.
 
+- **`agent/conference_dates.py`** — separate, small Claude + web search call
+  (not part of the main lead research) that looks up *actual confirmed*
+  dates for the meetings listed in `agent/conferences.py`, and caches them
+  in `conference_dates_cache.json` (gitignored, per-user like
+  `gui_config.json`). Deliberately **not** run automatically — only when
+  the user clicks "Refresh Dates" in the GUI — since it's a real, billed
+  API call each time; the whole point is a manual, on-demand reminder
+  system, not a background job. `upcoming_meetings()` reads the cache
+  (no network call) to find meetings starting within a window (default 45
+  days) of today, and `gui_logic.upcoming_meetings_banner_text()` turns
+  that into the banner text shown at the top of the GUI on every launch.
+  If there's no cache yet, the banner tells the user to click "Refresh
+  Dates" rather than guessing a date — same anti-fabrication discipline as
+  the rest of the tool, just applied to conference timing instead of lead
+  data. `conferences.py`'s `typical_timing` field (e.g. `"May/June"`) is
+  only ever a rough hint inside the main research prompt; it is never used
+  as a stand-in for a real date in the reminder banner.
+
 ### `gui.py` can be packaged into a standalone Windows `.exe`
 
 `ElevateImaging-BD-Agent.spec` (committed) drives `pyinstaller

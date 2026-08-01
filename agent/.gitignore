@@ -7,5 +7,6 @@ leads_report*.csv
 run_windows.bat
 seen_leads.json
 gui_config.json
+conference_dates_cache.json
 build/
 dist/

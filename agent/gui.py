@@ -16,7 +16,16 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, scrolledtext, ttk
 
-from gui_logic import QueueWriter, build_args, load_config, run_pipeline, save_config
+import conference_dates
+from gui_logic import (
+    CONFERENCE_DATES_CACHE_PATH,
+    QueueWriter,
+    build_args,
+    load_config,
+    run_pipeline,
+    save_config,
+    upcoming_meetings_banner_text,
+)
 
 
 class App(tk.Tk):
@@ -46,6 +55,17 @@ class App(tk.Tk):
 
     def _build_ui(self):
         pad = {"padx": 6, "pady": 4}
+
+        calendar_frame = ttk.LabelFrame(self, text="Conference Calendar")
+        calendar_frame.pack(fill="x", **pad)
+        self.calendar_var = tk.StringVar(value=self._initial_banner_text())
+        ttk.Label(calendar_frame, textvariable=self.calendar_var, wraplength=580, justify="left").pack(
+            side="left", fill="x", expand=True, **pad
+        )
+        self.refresh_dates_button = ttk.Button(
+            calendar_frame, text="Refresh Dates", command=self.on_refresh_dates
+        )
+        self.refresh_dates_button.pack(side="right", **pad)
 
         keys_frame = ttk.LabelFrame(self, text="API Keys (saved locally, entered once)")
         keys_frame.pack(fill="x", **pad)
@@ -81,6 +101,14 @@ class App(tk.Tk):
         self.log_text = scrolledtext.ScrolledText(log_frame, height=20, state="disabled", wrap="word")
         self.log_text.pack(fill="both", expand=True)
 
+    def _initial_banner_text(self) -> str:
+        text = upcoming_meetings_banner_text()
+        if text:
+            return text
+        if CONFERENCE_DATES_CACHE_PATH.exists():
+            return "No major meetings in the next 45 days (based on the last refresh)."
+        return "Click \"Refresh Dates\" to check for upcoming meetings (uses a small amount of API budget)."
+
     def _log(self, text: str) -> None:
         self.log_text.configure(state="normal")
         self.log_text.insert("end", text)
@@ -99,6 +127,9 @@ class App(tk.Tk):
                     self.run_button.configure(state="normal")
                 elif kind == "error":
                     self.run_button.configure(state="normal")
+                elif kind == "banner":
+                    self.calendar_var.set(payload)
+                    self.refresh_dates_button.configure(state="normal")
         except queue.Empty:
             pass
         self.after(100, self._poll_log_queue)
@@ -156,6 +187,36 @@ class App(tk.Tk):
         except Exception as exc:  # surface any failure in the window instead of a silent crash
             self.log_queue.put(("text", f"\n\nError: {exc}\n"))
             self.log_queue.put(("error", str(exc)))
+        finally:
+            sys.stdout, sys.stderr = old_stdout, old_stderr
+
+    def on_refresh_dates(self) -> None:
+        """Look up actual confirmed conference dates via a small, separate
+        API call (not part of the main lead search) and cache them locally.
+        Only runs when clicked — never automatically — since it's a real,
+        billed API call each time."""
+        anthropic_key = self.anthropic_key_var.get().strip()
+        if not anthropic_key:
+            messagebox.showerror("Missing key", "Please enter your Anthropic API key first.")
+            return
+        os.environ["ANTHROPIC_API_KEY"] = anthropic_key
+
+        self.refresh_dates_button.configure(state="disabled")
+        self.calendar_var.set("Looking up confirmed conference dates...")
+        threading.Thread(target=self._refresh_dates_in_background, daemon=True).start()
+
+    def _refresh_dates_in_background(self) -> None:
+        old_stdout, old_stderr = sys.stdout, sys.stderr
+        writer = QueueWriter(self.log_queue)
+        sys.stdout = writer
+        sys.stderr = writer
+        try:
+            conference_dates.refresh(CONFERENCE_DATES_CACHE_PATH)
+            banner = upcoming_meetings_banner_text() or "No major meetings in the next 45 days (just refreshed)."
+            self.log_queue.put(("banner", banner))
+        except Exception as exc:
+            self.log_queue.put(("text", f"\n\n[Conference date refresh failed: {exc}]\n"))
+            self.log_queue.put(("banner", f"Refresh failed: {exc}"))
         finally:
             sys.stdout, sys.stderr = old_stdout, old_stderr
 
