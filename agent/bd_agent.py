@@ -201,14 +201,31 @@ def enrich_contacts(leads: list, api_key: Optional[str], min_confidence: int, de
     return enriched
 
 
+# Trailing credentials/suffixes that show up in freely-researched name strings
+# (e.g. "Jianmin Fang, Ph.D.") and must not be mistaken for a surname.
+NAME_SUFFIXES = {"jr", "jr.", "sr", "sr.", "ii", "iii", "iv", "phd", "ph.d.", "md", "m.d."}
+
+
+def _last_name(full_name: str) -> str:
+    """Best-effort surname extraction from a free-text name.
+
+    Drops anything after the first comma (titles/credentials like ", Ph.D."
+    almost always follow one), then strips trailing suffix tokens so
+    "Jianmin Fang, Ph.D." yields "Fang", not "Ph.D." (a naive
+    `.split()[-1]` grabs the credential instead of the name).
+    """
+    core = full_name.split(",")[0].strip()
+    parts = [p for p in core.split() if p.lower().strip(".") not in {s.strip(".") for s in NAME_SUFFIXES}]
+    return parts[-1] if parts else core or full_name.strip()
+
+
 def draft_email(lead: dict, contact, args: argparse.Namespace):
     """Render the fixed-template outreach email. Returns (subject, body)."""
     contact_name = (contact.name if contact and contact.name else None) or lead.get("contact_name")
     if contact and contact.email and contact_name:
         salutation = f"Dear {contact_name},"
     elif contact_name:
-        last_name = contact_name.strip().split()[-1]
-        salutation = f"Dear Dr. {last_name},"
+        salutation = f"Dear Dr. {_last_name(contact_name)},"
     else:
         salutation = "Hello,"
 
