@@ -73,6 +73,8 @@ class App(tk.Tk):
         self.run_button.pack(side="left", **pad)
         self.open_report_button = ttk.Button(run_frame, text="Open report", command=self.open_report, state="disabled")
         self.open_report_button.pack(side="left", **pad)
+        self.new_search_button = ttk.Button(run_frame, text="New Search", command=self.on_new_search)
+        self.new_search_button.pack(side="left", **pad)
 
         log_frame = ttk.LabelFrame(self, text="Progress")
         log_frame.pack(fill="both", expand=True, **pad)
@@ -156,6 +158,20 @@ class App(tk.Tk):
             self.log_queue.put(("error", str(exc)))
         finally:
             sys.stdout, sys.stderr = old_stdout, old_stderr
+
+    def on_new_search(self) -> None:
+        """Reset every search-parameter field to its default and clear the
+        progress log/report state, so the window looks like a fresh launch
+        without touching the saved API keys (those stay filled in)."""
+        for key, _label, default, _width in self.FIELDS:
+            self.field_vars[key].set(default)
+
+        self.log_text.configure(state="normal")
+        self.log_text.delete("1.0", "end")
+        self.log_text.configure(state="disabled")
+
+        self.report_path = None
+        self.open_report_button.configure(state="disabled")
 
     def open_report(self) -> None:
         if self.report_path and self.report_path.exists():
