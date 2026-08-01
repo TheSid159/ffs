@@ -89,15 +89,18 @@ for scripting/automation.
 
 ## What you get
 
-Either path writes a Markdown report (`leads_report.md` by default —
-nothing is ever sent) with one section per lead, labeled by signal type
+Either path writes **two files**: a Markdown report (`leads_report.md` by
+default — nothing is ever sent) and a CSV (`leads_report.csv`, same name,
+next to it) with one row per lead for tracking in a spreadsheet or
+importing elsewhere.
+
+The Markdown report has one section per lead, labeled by signal type
 (`[Trial Result]`, `[Conference Highlight]`, `[Funding]`, `[Leadership
 Change]`, `[New Trial Registration]`, `[Regulatory Designation]`,
-`[Regulatory Milestone]`, `[Trial Expansion]`): the detail, a source link, the
-verified contact (or an explicit "not confirmed" / "not publicly
-available" — it will never invent an email or a confidence score), and —
-for `[Trial Result]` leads only — a draft outreach email that always opens
-with:
+`[Regulatory Milestone]`, `[Trial Expansion]`): the detail, a source link,
+the verified contact (or an explicit "not confirmed" / "not publicly
+available" — it will never invent an email or a confidence score), and a
+draft outreach email. `[Trial Result]` leads always open with:
 
 > Dear [contact name], I read with interest your recent paper, "[abstract
 > title]" (Abstract #[abstract number]), at [meeting name] on [presentation
@@ -105,10 +108,10 @@ with:
 > introduce our imaging CRO, Elevate Imaging, as a potential imaging vendor
 > as you progress [drug/asset name] through its next stage of development.
 
-That fixed opening is specific to referencing an already-presented trial
-result, so the other seven signal types are reported with full detail but
-no auto-drafted email — draft those manually, or ask for a dedicated
-template to be added for a given signal type.
+That exact wording was hand-specified and is treated as fixed. The other
+seven signal types get a draft too, but with an opening written by Claude
+Code as a starting point rather than hand-specified the same way — the
+report flags those with a note to review the wording before relying on it.
 
 The script never sends anything — you review and send each draft yourself.
 

@@ -20,6 +20,8 @@ Usage:
 """
 
 import argparse
+import csv
+import io
 import json
 import os
 import re
@@ -325,15 +327,76 @@ def _lead_title(lead: dict) -> str:
     )
 
 
-def draft_email(lead: dict, contact, args: argparse.Namespace):
-    """Render the fixed-template outreach email. Returns (subject, body).
+def _opening_and_transition(lead: dict, args: argparse.Namespace) -> tuple:
+    """Return (opening_paragraph, transition_paragraph) for a lead's signal
+    type. Only the "trial_result" case is a hard, verbatim CRO requirement
+    ("I read with interest your recent paper... Congratulations on this
+    exciting result" — see CLAUDE.md "The fixed email opening") — never
+    loosen or paraphrase it. The other seven were drafted by Claude Code at
+    the user's request as a starting point and are NOT hard-specified the
+    same way; treat them as adjustable until the user signs off on exact
+    wording, the same way they did for trial_result.
+    """
+    signal_type = (lead.get("signal_type") or "trial_result").strip().lower()
+    company = lead.get("company_name") or "your company"
+    asset = lead.get("drug_asset_name") or lead.get("trial_name") or "this asset"
+    intro = f"I wanted to introduce our imaging CRO, {args.sender_company}, as a potential imaging vendor"
 
-    Only call this for "trial_result" leads — the opening ("I read with
-    interest your recent paper... Congratulations on this exciting result")
-    is a hard, verbatim CRO requirement written for referencing a presented
-    trial result, and doesn't fit a funding round, leadership change, or new
-    registry filing. Don't loosen/repurpose it for other signal types;
-    render_report() skips drafting for those instead.
+    if signal_type == "conference_highlight":
+        headline = lead.get("abstract_title") or "your upcoming presentation"
+        conference = lead.get("conference_name") or "the conference"
+        date_clause = f" on {lead['presentation_date']}" if lead.get("presentation_date") else ""
+        opening = f'I saw that "{headline}" is on the agenda at {conference}{date_clause}. Congratulations on the recognition.'
+        transition = f"Given this, {intro} as you prepare for {conference} and progress {asset} through its next stage of development."
+
+    elif signal_type == "funding":
+        detail = lead.get("signal_detail") or "your recent funding"
+        opening = f"I read about {company}'s recent funding — {detail} Congratulations on the milestone."
+        transition = f"Given this, {intro} as you progress {asset} through its next stage of development with this new funding."
+
+    elif signal_type == "leadership_change":
+        new_title = lead.get("contact_title") or "your new role"
+        opening = f"I read that you've recently joined {company} as {new_title}. Congratulations on the appointment."
+        transition = f"Given this, {intro} as you build out {company}'s clinical development strategy."
+
+    elif signal_type == "new_registration":
+        registry = lead.get("registry_name") or "the registry"
+        opening = f"I saw that {company} has registered a new {args.phase} trial for {asset} on {registry}. Congratulations on advancing to this stage."
+        transition = f"Given this, {intro} as you plan imaging assessment for this trial."
+
+    elif signal_type == "regulatory_designation":
+        detail = lead.get("signal_detail") or "this regulatory designation"
+        opening = f"I read that {asset} recently received a regulatory designation — {detail} Congratulations on this important milestone."
+        transition = f"Given this, {intro} as you accelerate {asset}'s development plan."
+
+    elif signal_type == "regulatory_milestone":
+        detail = lead.get("signal_detail") or "this regulatory milestone"
+        opening = f"I read that {company} recently reached a regulatory milestone — {detail} Congratulations on reaching this stage."
+        transition = f"Given this, {intro} as you finalize your pivotal trial design."
+
+    elif signal_type == "trial_expansion":
+        detail = lead.get("signal_detail") or "this trial expansion"
+        opening = f"I saw that {company} recently expanded a trial — {detail} Congratulations on the expansion."
+        transition = f"Given this, {intro} as you scale imaging assessment across these new sites."
+
+    else:  # "trial_result" — the hard-specified template, do not alter
+        abstract_ref = f'"{lead.get("abstract_title") or lead.get("trial_name") or "your recent presentation"}"'
+        if lead.get("abstract_number"):
+            abstract_ref += f' (Abstract #{lead["abstract_number"]})'
+        date_clause = f" on {lead['presentation_date']}" if lead.get("presentation_date") else ""
+        conference = lead.get("conference_name") or "the conference"
+        opening = f"I read with interest your recent paper, {abstract_ref}, at {conference}{date_clause}. Congratulations on this exciting result."
+        transition = f"Given this, {intro} as you progress {asset} through its next stage of development."
+
+    return opening, transition
+
+
+def draft_email(lead: dict, contact, args: argparse.Namespace):
+    """Render the outreach email for a lead. Returns (subject, body).
+
+    The opening/transition text varies by signal_type — see
+    `_opening_and_transition()`. Everything else (salutation logic, company
+    blurb, sign-off) is shared across all signal types.
     """
     contact_name = (contact.name if contact and contact.name else None) or lead.get("contact_name")
     if contact and contact.email and contact_name:
@@ -343,21 +406,13 @@ def draft_email(lead: dict, contact, args: argparse.Namespace):
     else:
         salutation = "Hello,"
 
-    abstract_ref = f'"{lead.get("abstract_title") or lead.get("trial_name") or "your recent presentation"}"'
-    if lead.get("abstract_number"):
-        abstract_ref += f' (Abstract #{lead["abstract_number"]})'
-
-    date_clause = f' on {lead["presentation_date"]}' if lead.get("presentation_date") else ""
-    conference = lead.get("conference_name") or "the conference"
     asset = lead.get("drug_asset_name") or lead.get("trial_name") or "this asset"
+    opening, transition = _opening_and_transition(lead, args)
 
     body = (
         f"{salutation}\n\n"
-        f"I read with interest your recent paper, {abstract_ref}, at {conference}"
-        f"{date_clause}. Congratulations on this exciting result.\n\n"
-        f"Given this, I wanted to introduce our imaging CRO, {args.sender_company}, "
-        f"as a potential imaging vendor as you progress {asset} through its next "
-        f"stage of development.\n\n"
+        f"{opening}\n\n"
+        f"{transition}\n\n"
         f"{args.sender_company} provides central image review, blinded "
         f"independent endpoint adjudication and imaging biomarker services for "
         f"oncology trials. If it would be useful, I would welcome a short "
@@ -451,23 +506,20 @@ def render_report(
             lines.append("**Contact:** not publicly available")
         lines.append("")
 
-        if signal_type == "trial_result":
-            subject, body = draft_email(lead, contact, args)
-            lines.append("**Draft email:**")
-            lines.append("")
-            lines.append(f"> Subject: {subject}")
-            lines.append(">")
-            for paragraph in body.split("\n\n"):
-                lines.append("> " + paragraph.replace("\n", "\n> "))
-                lines.append(">")
-        else:
+        subject, body = draft_email(lead, contact, args)
+        lines.append("**Draft email:**")
+        if signal_type != "trial_result":
             lines.append(
-                "_No draft email generated — the fixed outreach template's opening "
-                '("I read with interest your recent paper... Congratulations on this '
-                f'exciting result") is written specifically for a {SIGNAL_LABELS["trial_result"].lower()} '
-                "lead and doesn't fit this signal type. Draft this one manually, or ask "
-                "for a dedicated template for this signal type._"
+                "_(this signal type's opening was drafted by Claude Code as a starting "
+                "point, not hand-specified the way the trial-result template was — "
+                "review the wording before relying on it)_"
             )
+        lines.append("")
+        lines.append(f"> Subject: {subject}")
+        lines.append(">")
+        for paragraph in body.split("\n\n"):
+            lines.append("> " + paragraph.replace("\n", "\n> "))
+            lines.append(">")
         lines.append("")
         lines.append("---")
 
@@ -491,6 +543,88 @@ def render_report(
             lines.append(f"- **{lead.get('company_name') or 'Unknown'}** — {title} (first seen {first_seen})")
 
     return "\n".join(lines)
+
+
+CSV_FIELDNAMES = [
+    "signal_type", "company_name", "company_domain", "headline", "detail",
+    "source_url", "contact_name", "contact_title", "contact_email",
+    "contact_confidence", "contact_status", "draft_subject", "draft_body",
+]
+
+
+def _contact_csv_fields(lead: dict, contact, args: argparse.Namespace) -> dict:
+    """Contact-status fields for one CSV row. Mirrors the same decision
+    tree as the Markdown contact block in render_report() (confirmed /
+    lookup failed / below-threshold / found-but-unconfirmed / not publicly
+    available), just condensed into short status strings for a spreadsheet
+    cell instead of report prose — if that branching logic changes, check
+    both places.
+    """
+    if contact and contact.email:
+        return {
+            "contact_name": contact.name or lead.get("contact_name") or "",
+            "contact_title": contact.title or lead.get("contact_title") or "",
+            "contact_email": contact.email,
+            "contact_confidence": contact.confidence,
+            "contact_status": "confirmed",
+        }
+    if contact and contact.source.startswith("error"):
+        return {
+            "contact_name": lead.get("contact_name") or "",
+            "contact_title": lead.get("contact_title") or "",
+            "contact_email": "",
+            "contact_confidence": None,
+            "contact_status": f"lookup failed: {contact.source}",
+        }
+    if contact and contact.confidence is not None:
+        return {
+            "contact_name": contact.name or lead.get("contact_name") or "",
+            "contact_title": contact.title or lead.get("contact_title") or "",
+            "contact_email": "",
+            "contact_confidence": contact.confidence,
+            "contact_status": "not confirmed (below threshold)",
+        }
+    if lead.get("contact_name"):
+        return {
+            "contact_name": lead["contact_name"],
+            "contact_title": lead.get("contact_title") or "",
+            "contact_email": "",
+            "contact_confidence": None,
+            "contact_status": "not confirmed",
+        }
+    return {
+        "contact_name": "", "contact_title": "", "contact_email": "",
+        "contact_confidence": None, "contact_status": "not publicly available",
+    }
+
+
+def render_csv(enriched_leads: list, args: argparse.Namespace) -> str:
+    """CSV export of the same leads in render_report(), one row per lead —
+    for tracking in a spreadsheet, or importing elsewhere later. Covers
+    only this run's leads, not excluded/repeat leads (those are
+    informational sections in the Markdown report, not actionable leads).
+    """
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=CSV_FIELDNAMES)
+    writer.writeheader()
+
+    for lead, contact in enriched_leads:
+        signal_type = (lead.get("signal_type") or "trial_result").strip().lower()
+        subject, body = draft_email(lead, contact, args)
+        row = {
+            "signal_type": signal_type,
+            "company_name": lead.get("company_name") or "",
+            "company_domain": lead.get("company_domain") or "",
+            "headline": _lead_title(lead),
+            "detail": lead.get("result_summary") or lead.get("signal_detail") or "",
+            "source_url": lead.get("abstract_url") or "",
+            "draft_subject": subject,
+            "draft_body": body,
+            **_contact_csv_fields(lead, contact, args),
+        }
+        writer.writerow(row)
+
+    return buffer.getvalue()
 
 
 def main() -> None:
@@ -581,6 +715,10 @@ def main() -> None:
     )
     out_path.write_text(report, encoding="utf-8")
     print(f"Saved report to {out_path.resolve()}", file=sys.stderr)
+
+    csv_path = out_path.with_suffix(".csv")
+    csv_path.write_text(render_csv(enriched, args), encoding="utf-8", newline="")
+    print(f"Saved CSV to {csv_path.resolve()}", file=sys.stderr)
 
 
 if __name__ == "__main__":

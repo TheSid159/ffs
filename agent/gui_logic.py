@@ -128,4 +128,9 @@ def run_pipeline(args: argparse.Namespace) -> Path:
         preamble, enriched, excluded, args, hunter_enabled=bool(args.hunter_api_key), repeat_leads=repeat_leads
     )
     out_path.write_text(report, encoding="utf-8")
+
+    csv_path = out_path.with_suffix(".csv")
+    csv_path.write_text(bd_agent.render_csv(enriched, args), encoding="utf-8", newline="")
+    print(f"\nSaved CSV to: {csv_path.resolve()}")
+
     return out_path

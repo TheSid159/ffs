@@ -123,26 +123,45 @@ and `abstract_title` doubles as a general headline. `signal_detail` is the
 plain-English description for every type except `trial_result`.
 `registry_name`/`registry_id` are `new_registration`-only.
 
-**`draft_email()` is only called for `trial_result` leads.** The fixed
-opening ("I read with interest your recent paper... Congratulations on
-this exciting result") is a verbatim, hard CRO requirement written for
-referencing an already-presented trial result — it doesn't fit a funding
-round, a new CMO, a regulatory designation, or a freshly registered trial
-with no result yet, and that requirement says not to loosen or paraphrase
-it (see "The fixed email opening" below). `render_report()` skips the
-draft-email section for the other seven types with an explicit note
-explaining why, rather than
-force-fitting them into a template that would misrepresent the lead. If
-dedicated templates for the other signal types are wanted later, that
-needs its own explicit wording from the user, the same way the
-trial-result template's exact wording was hand-specified — don't invent
-one.
+**`draft_email()` drafts an email for every signal type**, via
+`_opening_and_transition()`, but only the `trial_result` opening ("I read
+with interest your recent paper... Congratulations on this exciting
+result") is a verbatim, hard CRO requirement (see "The fixed email
+opening" below) — never loosen or paraphrase it. The other seven openings
+were drafted by Claude Code at the user's explicit request as a starting
+point, NOT hand-specified the same way; `render_report()` marks those with
+an inline note ("drafted by Claude Code... review the wording") so the
+distinction is visible in the report itself, not just in this file. If the
+user gives exact wording for a given signal type later (the same way they
+did for `trial_result`), update `_opening_and_transition()` and drop that
+type's review note.
 
 `seen_leads.dedup_key()` prefixes every key with `signal_type` — without
 it, two different signal types for the same company (e.g. a funding lead
 and a leadership-change lead) would both fall back to the same
 `company_name|` key and the second would be wrongly treated as a repeat of
 the first.
+
+### CSV export
+
+`render_csv()` writes the same leads as `render_report()`'s Markdown, one
+row per lead, to a `.csv` file with the same basename as `--output`
+(`leads_report.csv` next to `leads_report.md` by default) — both `main()`
+and `gui_logic.run_pipeline()` write it right after the Markdown report.
+Only covers the current run's actionable leads, not the excluded/repeat
+sections (those are informational, not leads to act on). Contact-status
+logic is intentionally duplicated in condensed form in
+`_contact_csv_fields()` rather than sharing code with `render_report()`'s
+Markdown contact block — the Markdown version's wording (e.g. the ⚠️
+lookup-FAILED explanation) is specific/verbose by design and a shared
+helper would have to either lose that detail or leak CSV-cell-length prose
+into the report. Both follow the same underlying decision tree (confirmed
+/ lookup failed / below-threshold / found-but-unconfirmed / not publicly
+available) — if that branching logic changes, update both places.
+Written with `newline=""` on `Path.write_text()` (Python 3.10+) since the
+`csv` module's own line-terminator handling and the platform's text-mode
+newline translation would otherwise double up `\r\n` into `\r\r\n` on
+Windows, this tool's target platform.
 
 - **`agent/hunter_contacts.py`** — Hunter.io API client (stdlib `urllib`,
   no extra dependency). `find_contact(domain, contact_name, api_key,
