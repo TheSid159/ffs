@@ -129,6 +129,15 @@ so explicitly rather than silently omitting the caveat.
   (testable here) over inlining logic into `gui.py` (only testable by the
   user, on their own machine, since this sandbox has no Tkinter/display).
 
+  `build_args()`'s `conference` field splits on **commas**, not whitespace.
+  It used to split on whitespace, which silently broke a single-entry
+  conference name containing its own space — typing "ASCO GU" (one
+  conference) into the field produced `["ASCO", "GU"]` (two conferences),
+  changing what was actually searched with no visible error; a user's
+  pasted report showing "Scope searched: ASCO and GU" instead of "ASCO GU"
+  was the tell. The `year` field still splits on whitespace deliberately —
+  years never contain internal spaces, so that's not the same bug.
+
 ### `gui.py` can be packaged into a standalone Windows `.exe`
 
 `ElevateImaging-BD-Agent.spec` (committed) drives `pyinstaller
@@ -160,6 +169,32 @@ fingerprinted and blocked (Cloudflare error 1010) before the request ever
 reaches Hunter's actual API — this was misread as a plan/rate-limit problem
 before the real cause was found. Don't strip this header when touching
 `_get()`.
+
+### Hunter.io Domain Search plan limit
+
+The Domain Search call in `hunter_contacts.find_contact()` passes
+`"limit": 10`, not a higher number. Hunter's free/starter plans reject
+`domain-search` requests above their per-plan cap with `HTTP 400
+pagination_error: The search results are limited to 10 email addresses on
+your current plan.` — this surfaced in a real report as a ⚠️ lookup-FAILED
+line for three companies. If a paid-plan user ever needs more candidates
+per domain to pick the best CEO/CMO match from, this would need to become
+a configurable value rather than a hardcoded 10, not just bumped back up.
+
+### `dict.get(key, default)` is not None-safe
+
+`.get(key, default)` only substitutes `default` when `key` is **absent** —
+if the key is present with an explicit JSON `null` (which the research
+prompt deliberately asks Claude to use for unknown fields, e.g. "abstract_number":
+null), `.get()` returns `None` itself, and that `None` then renders
+literally as the text "None" in the report and in drafted emails. This hit
+real leads in production (Protara and Bicycle Therapeutics both showed
+`**Abstract:** [None](url)` and a "Dear ... your recent paper, "None""
+email opening). Every lead-field lookup in `draft_email()` and
+`render_report()` uses `lead.get(key) or default` instead — `or` correctly
+falls through on both an absent key and an explicit `None`. When adding a
+new lead field anywhere in `bd_agent.py`, use this pattern, not
+`.get(key, default)`.
 
 ### The fixed email opening
 

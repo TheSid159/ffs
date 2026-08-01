@@ -111,7 +111,10 @@ def find_contact(
                 return Contact(contact_name, None, email, confidence, "email_finder")
             return Contact(contact_name, None, None, confidence, "email_finder")
 
-        data = _get("domain-search", {"domain": domain, "limit": 25}, api_key)
+        # 10, not 25: Hunter's free/starter plans reject domain-search requests
+        # above their per-plan cap with a 400 pagination_error (observed in
+        # practice — see CLAUDE.md).
+        data = _get("domain-search", {"domain": domain, "limit": 10}, api_key)
         candidates = (data.get("data") or {}).get("emails") or []
 
         best = None

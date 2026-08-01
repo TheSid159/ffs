@@ -62,7 +62,11 @@ def build_args(form: dict) -> argparse.Namespace:
     """Build the Namespace bd_agent's pipeline functions expect from a plain
     dict of form values (as collected from GUI fields). Raises ValueError on
     bad numeric input so the caller can show a clean error dialog."""
-    conference = form.get("conference", "").split() or ["ASCO GU"]
+    # Split on commas, not whitespace — several real conference names contain a
+    # space themselves (e.g. "ASCO GU"), and whitespace-splitting silently
+    # broke a single "ASCO GU" entry into two separate conferences ("ASCO",
+    # "GU"), changing what was actually searched without any visible error.
+    conference = [c.strip() for c in form.get("conference", "").split(",") if c.strip()] or ["ASCO GU"]
     year = [int(y) for y in form.get("year", "").split()] or [2025, 2026]
     hunter_min_confidence = int(form.get("hunter_min_confidence", "").strip() or 90)
 

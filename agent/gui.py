@@ -22,7 +22,7 @@ from gui_logic import QueueWriter, build_args, load_config, run_pipeline, save_c
 class App(tk.Tk):
     FIELDS = [
         # (config_key, label, default, width)
-        ("conference", "Conference(s) (space-separated):", "ASCO GU", 40),
+        ("conference", "Conference(s) (comma-separated):", "ASCO GU", 40),
         ("year", "Year(s) (space-separated):", "2025 2026", 40),
         ("indication", "Indication:", "bladder cancer", 40),
         ("phase", "Phase:", "Phase II", 40),

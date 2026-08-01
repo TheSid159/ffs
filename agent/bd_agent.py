@@ -229,13 +229,13 @@ def draft_email(lead: dict, contact, args: argparse.Namespace):
     else:
         salutation = "Hello,"
 
-    abstract_ref = f'"{lead.get("abstract_title", lead.get("trial_name", "your recent presentation"))}"'
+    abstract_ref = f'"{lead.get("abstract_title") or lead.get("trial_name") or "your recent presentation"}"'
     if lead.get("abstract_number"):
         abstract_ref += f' (Abstract #{lead["abstract_number"]})'
 
     date_clause = f' on {lead["presentation_date"]}' if lead.get("presentation_date") else ""
-    conference = lead.get("conference_name", "the conference")
-    asset = lead.get("drug_asset_name") or lead.get("trial_name", "this asset")
+    conference = lead.get("conference_name") or "the conference"
+    asset = lead.get("drug_asset_name") or lead.get("trial_name") or "this asset"
 
     body = (
         f"{salutation}\n\n"
@@ -283,18 +283,18 @@ def render_report(
     lines.append("---")
 
     for lead, contact in enriched_leads:
-        title = lead.get("drug_asset_name") or lead.get("trial_name", "")
-        lines += ["", f"## {lead.get('company_name', 'Unknown company')} — {title}", ""]
+        title = lead.get("drug_asset_name") or lead.get("trial_name") or ""
+        lines += ["", f"## {lead.get('company_name') or 'Unknown company'} — {title}", ""]
         lines.append(
-            f"**Trial:** {lead.get('trial_name', '')} | "
-            f"**Conference:** {lead.get('conference_name', '')} | "
-            f"**Result:** {lead.get('result_summary', '')}"
+            f"**Trial:** {lead.get('trial_name') or ''} | "
+            f"**Conference:** {lead.get('conference_name') or ''} | "
+            f"**Result:** {lead.get('result_summary') or ''}"
         )
         lines.append("")
 
         if lead.get("abstract_url"):
             note = f" — {lead['abstract_url_note']}" if lead.get("abstract_url_note") else ""
-            lines.append(f"**Abstract:** [{lead.get('abstract_title', 'link')}]({lead['abstract_url']}){note}")
+            lines.append(f"**Abstract:** [{lead.get('abstract_title') or 'link'}]({lead['abstract_url']}){note}")
         else:
             lines.append("**Abstract:** no direct link found")
         lines.append("")
@@ -302,7 +302,7 @@ def render_report(
         if contact and contact.email:
             title_part = f", {contact.title}" if contact.title else ""
             lines.append(
-                f"**Contact:** {contact.name or lead.get('contact_name', 'Unknown')}{title_part} — "
+                f"**Contact:** {contact.name or lead.get('contact_name') or 'Unknown'}{title_part} — "
                 f"{contact.email} _(Hunter.io confidence: {contact.confidence}/100)_"
             )
         elif contact and contact.source.startswith("error"):
@@ -338,7 +338,7 @@ def render_report(
     if excluded:
         lines += ["", "## Reviewed but NOT included (and why)", ""]
         for item in excluded:
-            lines.append(f"- **{item.get('company_name', 'Unknown')}** — {item.get('reason', '')}")
+            lines.append(f"- **{item.get('company_name') or 'Unknown'}** — {item.get('reason') or ''}")
 
     if repeat_leads:
         lines += [
@@ -351,8 +351,8 @@ def render_report(
             "",
         ]
         for lead, first_seen in repeat_leads:
-            title = lead.get("drug_asset_name") or lead.get("trial_name", "")
-            lines.append(f"- **{lead.get('company_name', 'Unknown')}** — {title} (first seen {first_seen})")
+            title = lead.get("drug_asset_name") or lead.get("trial_name") or ""
+            lines.append(f"- **{lead.get('company_name') or 'Unknown'}** — {title} (first seen {first_seen})")
 
     return "\n".join(lines)
 
