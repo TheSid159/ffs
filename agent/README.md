@@ -3,13 +3,15 @@
 Business development lead-finder for an imaging CRO. It:
 
 1. Uses Claude with web search to find business-development leads in a given
-   cancer type (default: bladder cancer) across five signal types: positive
+   cancer type (default: bladder cancer) across eight signal types: positive
    Phase II trial results at named conferences, conference agenda/keynote/
    late-breaking-abstract highlights (checked against a curated list of
    major worldwide oncology/urology meetings), biotech funding rounds,
-   CEO/CMO/CSO leadership changes, and new trial registrations on
-   ClinicalTrials.gov and international equivalents — and returns them all
-   as structured data.
+   CEO/CMO/CSO leadership changes, new trial registrations on
+   ClinicalTrials.gov and international equivalents, FDA/EMA regulatory
+   designations, End-of-Phase 2/regulatory-meeting milestones, and trial
+   expansions to new countries/sites — and returns them all as structured
+   data.
 2. Looks up a verified CEO/CMO contact for each company via **Hunter.io**,
    gated on a minimum confidence score (default 90/100) — a low-confidence
    guess is never reported as a confirmed contact.
@@ -90,7 +92,8 @@ for scripting/automation.
 Either path writes a Markdown report (`leads_report.md` by default —
 nothing is ever sent) with one section per lead, labeled by signal type
 (`[Trial Result]`, `[Conference Highlight]`, `[Funding]`, `[Leadership
-Change]`, `[New Trial Registration]`): the detail, a source link, the
+Change]`, `[New Trial Registration]`, `[Regulatory Designation]`,
+`[Regulatory Milestone]`, `[Trial Expansion]`): the detail, a source link, the
 verified contact (or an explicit "not confirmed" / "not publicly
 available" — it will never invent an email or a confidence score), and —
 for `[Trial Result]` leads only — a draft outreach email that always opens
@@ -103,7 +106,7 @@ with:
 > as you progress [drug/asset name] through its next stage of development.
 
 That fixed opening is specific to referencing an already-presented trial
-result, so the other four signal types are reported with full detail but
+result, so the other seven signal types are reported with full detail but
 no auto-drafted email — draft those manually, or ask for a dedicated
 template to be added for a given signal type.
 

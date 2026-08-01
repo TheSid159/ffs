@@ -83,7 +83,7 @@ Six modules, no application framework:
      signal types" below for why). `render_report()` assembles the final
      Markdown.
 
-### Five lead signal types
+### Eight lead signal types
 
 `build_prompt()` asks Claude to categorize every lead with a `signal_type`:
 `trial_result` (positive Phase II result at a named conference — the
@@ -91,27 +91,47 @@ original, only signal type before this was added), `conference_highlight`
 (agenda/keynote/late-breaking-abstract activity at a major oncology/urology
 meeting, grounded against the curated list in `agent/conferences.py` so
 Claude isn't searching blind for what counts as "major"), `funding`
-(financing rounds, IPOs, grants, licensing deals), `leadership_change`
-(new CEO/CMO/CSO), and `new_registration` (a newly registered trial on
-ClinicalTrials.gov or an international equivalent — also listed in
-`agent/conferences.py` — surfacing a sponsor before their trial ever
-reaches a conference).
+(financing rounds, IPOs, grants, licensing deals — noting if proceeds are
+earmarked for a pivotal/registrational trial specifically, a stronger
+signal than general runway), `leadership_change` (new CEO/CMO/CSO),
+`new_registration` (a newly registered trial on ClinicalTrials.gov or an
+international equivalent — also listed in `agent/conferences.py` —
+surfacing a sponsor before their trial ever reaches a conference),
+`regulatory_designation` (FDA/EMA designations like Breakthrough Therapy,
+Fast Track, Priority Review, Orphan Drug, EMA PRIME), `regulatory_milestone`
+(End-of-Phase 2 or Type B/C meeting outcomes — usually means a pivotal
+trial's design, including imaging endpoints, is being finalized around
+now), and `trial_expansion` (an existing trial expanding to new
+countries/sites — multi-region trials are where centralized imaging review
+becomes valuable versus inconsistent local site reads).
+
+For `trial_result` and `new_registration` leads specifically, the prompt
+also asks Claude to fold two extra observations into the existing
+`result_summary`/`signal_detail` text rather than adding dedicated fields:
+whether the trial's endpoint explicitly uses a standardized imaging
+criterion (RECIST 1.1, iRECIST, PCWG3, Lugano, etc. — these typically
+require central/blinded independent imaging review, a direct signal of fit)
+and whether it looks like the company's first pivotal/registrational trial
+(companies often only engage an external imaging vendor once a trial has
+to hold up to regulators). These stay as prose notes, not booleans, since
+they're inherently soft inferences Claude is making, not verified facts.
 
 Several JSON fields are deliberately reused across signal types instead of
 adding a parallel field per type: `abstract_url`/`abstract_url_note` double
 as the general "source URL" (press release, registry entry, agenda page),
 and `abstract_title` doubles as a general headline. `signal_detail` is the
-plain-English description for the four non-trial-result types.
+plain-English description for every type except `trial_result`.
 `registry_name`/`registry_id` are `new_registration`-only.
 
 **`draft_email()` is only called for `trial_result` leads.** The fixed
 opening ("I read with interest your recent paper... Congratulations on
 this exciting result") is a verbatim, hard CRO requirement written for
 referencing an already-presented trial result — it doesn't fit a funding
-round, a new CMO, or a freshly registered trial with no result yet, and
-that requirement says not to loosen or paraphrase it (see "The fixed email
-opening" below). `render_report()` skips the draft-email section for the
-other four types with an explicit note explaining why, rather than
+round, a new CMO, a regulatory designation, or a freshly registered trial
+with no result yet, and that requirement says not to loosen or paraphrase
+it (see "The fixed email opening" below). `render_report()` skips the
+draft-email section for the other seven types with an explicit note
+explaining why, rather than
 force-fitting them into a template that would misrepresent the lead. If
 dedicated templates for the other signal types are wanted later, that
 needs its own explicit wording from the user, the same way the

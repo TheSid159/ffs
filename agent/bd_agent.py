@@ -48,7 +48,7 @@ imaging services (central image review, endpoint assessment, imaging \
 biomarkers) to biotech and pharmaceutical sponsors running clinical trials.
 
 Task — using web search, find business-development leads in {args.indication} \
-across FIVE signal categories. A lead is any biotech/pharma company activity \
+across EIGHT signal categories. A lead is any biotech/pharma company activity \
 that could be a reason to introduce {args.sender_company} as an imaging \
 vendor. Search for as many categories as your search budget allows; note in \
 your PART 1 summary if you had to skip or under-search any category.
@@ -97,6 +97,25 @@ their trial reaches a conference. Registries to check:
 Include the registry name, the registry's trial ID (e.g. an NCT number), and \
 a direct URL to the registry entry.
 
+CATEGORY 6 — "regulatory_designation": FDA or EMA designations (Breakthrough \
+Therapy, Fast Track, Priority Review, Orphan Drug, EMA PRIME, etc.) recently \
+granted to a company's asset in {args.indication}. These often precede a \
+company finalizing a pivotal trial's design — including its imaging \
+endpoints — and selecting vendors for it. Include the designation type, the \
+asset/trial it applies to, and a URL to the announcement.
+
+CATEGORY 7 — "regulatory_milestone": End-of-Phase 2 meetings, Type B/C \
+meetings, or other major regulatory-agency interactions recently reported \
+for a company's {args.indication} program. These usually mean a pivotal \
+trial's design is being finalized around now. Include what was reported and \
+a URL.
+
+CATEGORY 8 — "trial_expansion": an existing {args.indication} trial that \
+recently expanded to new countries or added sites. Multi-region/multi-site \
+trials are where centralized, standardized imaging review becomes valuable \
+versus relying on inconsistent local site reads — this is a strong direct \
+signal. Include what expanded and a URL.
+
 For every lead in every category, also try to identify:
    - The sponsoring biotech or pharmaceutical company, and its primary \
 website domain (e.g. "protaratx.com" — no "https://" or "www.")
@@ -106,6 +125,20 @@ as a quoted spokesperson — for a "leadership_change" lead this is usually \
 the lead itself). Do not spend extra search effort specifically hunting for \
 this — a dedicated, verified contact lookup happens separately after your \
 research, so this field is a bonus, not a requirement.
+
+Two more things worth actively noting, folded into the existing \
+result_summary/signal_detail text rather than as separate fields — both are \
+strong, specific signals of imaging-CRO fit, stronger than the category \
+alone:
+   - For "trial_result" and "new_registration" leads: if the trial's \
+endpoint explicitly uses a standardized imaging assessment criterion (e.g. \
+RECIST 1.1, iRECIST, PCWG3, Lugano), say so — these criteria typically \
+require central/blinded independent imaging review. Also note if this \
+appears to be the company's first pivotal/registrational trial (as opposed \
+to an earlier-phase trial) — companies often only engage an external \
+imaging vendor once a trial has to hold up to regulators.
+   - For "funding" leads: note if the proceeds are specifically said to \
+fund a pivotal/registrational trial, not just general runway.
 
 Also list any items you reviewed but excluded, and why (e.g. result was not \
 clearly positive, no commercial sponsor, wrong indication or phase, funding \
@@ -129,7 +162,7 @@ this exact shape and nothing else inside the fence:
 {{
   "leads": [
     {{
-      "signal_type": "trial_result" | "conference_highlight" | "funding" | "leadership_change" | "new_registration",
+      "signal_type": "trial_result" | "conference_highlight" | "funding" | "leadership_change" | "new_registration" | "regulatory_designation" | "regulatory_milestone" | "trial_expansion",
       "company_name": "...",
       "company_domain": "..." or null,
       "trial_name": "..." or null,
@@ -158,9 +191,9 @@ double as the general "source URL" field for every category (press release, \
 registry entry, or agenda page — not literally always an abstract). \
 "abstract_title" doubles as a general headline field. "signal_detail" is a \
 one- to two-sentence plain-English description of the signal, required for \
-"funding", "leadership_change", and "new_registration" leads (for \
-"trial_result", use "result_summary" instead; "signal_detail" can be null). \
-"registry_name"/"registry_id" are only for "new_registration" leads.
+every category except "trial_result" (which uses "result_summary" instead; \
+"signal_detail" can be null there). "registry_name"/"registry_id" are only \
+for "new_registration" leads.
 
 If you cannot find any qualifying leads in a category, leave it out of the \
 "leads" array and explain why in PART 1 rather than inventing results.
@@ -275,6 +308,9 @@ SIGNAL_LABELS = {
     "funding": "Funding",
     "leadership_change": "Leadership Change",
     "new_registration": "New Trial Registration",
+    "regulatory_designation": "Regulatory Designation",
+    "regulatory_milestone": "Regulatory Milestone",
+    "trial_expansion": "Trial Expansion",
 }
 
 
@@ -347,7 +383,8 @@ def render_report(
         f"# {args.indication.title()} — BD Leads for {args.sender_company}",
         "",
         f"**Scope searched:** {conference_list} ({years}), {args.phase} — trial results, "
-        f"conference highlights, funding, leadership changes, and new trial registrations.",
+        f"conference highlights, funding, leadership changes, new trial registrations, "
+        f"regulatory designations/milestones, and trial expansions.",
         "",
     ]
     if preamble:
