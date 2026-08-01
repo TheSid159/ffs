@@ -30,6 +30,7 @@ from typing import Optional
 
 import anthropic
 
+import conferences
 import hunter_contacts
 import seen_leads
 
@@ -38,7 +39,7 @@ JSON_FENCE_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 
 
 def build_prompt(args: argparse.Namespace) -> str:
-    conferences = " and ".join(args.conference)
+    conference_list = " and ".join(args.conference)
     years = ", ".join(str(y) for y in args.year)
     return f"""\
 You are a business development research assistant for an imaging Contract \
@@ -46,44 +47,80 @@ Research Organization (CRO) called "{args.sender_company}". The CRO provides \
 imaging services (central image review, endpoint assessment, imaging \
 biomarkers) to biotech and pharmaceutical sponsors running clinical trials.
 
-Task — do the following, using web search:
+Task — using web search, find business-development leads in {args.indication} \
+across FIVE signal categories. A lead is any biotech/pharma company activity \
+that could be a reason to introduce {args.sender_company} as an imaging \
+vendor. Search for as many categories as your search budget allows; note in \
+your PART 1 summary if you had to skip or under-search any category.
 
-1. Search for {args.phase} clinical trial results in {args.indication} that \
-were presented at the {conferences} annual meeting(s) in {years}. Only \
-include trials with a POSITIVE primary result (met its primary endpoint, or \
-the presenters/company described the result as positive, clinically \
-meaningful, or practice-changing).
+CATEGORY 1 — "trial_result": {args.phase} clinical trial results in \
+{args.indication} presented at the {conference_list} annual meeting(s) in \
+{years}. Only include trials with a POSITIVE primary result (met its primary \
+endpoint, or the presenters/company described the result as positive, \
+clinically meaningful, or practice-changing). For each: trial name/identifier \
+(e.g. NCT number), drug/investigational agent name, a one- to two-sentence \
+efficacy summary, the conference name/year, presentation date, abstract \
+title, abstract/presentation number, and a direct URL to the abstract or \
+presentation (conference abstract library, ASCO Meeting Library, ESMO \
+congress resource library, AUA abstract archive) or a company press release \
+URL if that's all you can find.
 
-2. For each qualifying trial, identify:
-   - Trial name / identifier (e.g. NCT number) and drug/investigational agent name
+CATEGORY 2 — "conference_highlight": for the same {conference_list} \
+meeting(s) in {years} (plus, if relevant, other major oncology/urology \
+meetings from this list — use it to judge what counts as "major", don't \
+limit yourself only to conferences the user explicitly named for this \
+category):
+{conferences.format_meeting_list()}
+Look for published agendas, keynote speaker announcements, and late-breaking \
+abstract titles in {args.indication} — company/trial activity that's \
+upcoming or newly announced, not necessarily already presented with a result \
+yet. Include the headline/title, conference name, date if known, and a \
+direct URL to the agenda page, program listing, or announcement.
+
+CATEGORY 3 — "funding": biotech or pharmaceutical companies working in \
+{args.indication} that have recently secured funding (venture round, IPO, \
+grant, or partnership/licensing deal with an upfront payment). Include the \
+funding type/amount if reported, and a URL to the announcement or press \
+release.
+
+CATEGORY 4 — "leadership_change": companies working in {args.indication} \
+that recently appointed a new CEO, CMO, or CSO. This is directly useful for \
+BD outreach — a new executive is a natural reason to (re-)introduce \
+{args.sender_company}. Include the person's name, new title, and a URL to \
+the announcement.
+
+CATEGORY 5 — "new_registration": newly registered {args.phase} trials in \
+{args.indication} on ClinicalTrials.gov or an international equivalent \
+registry, even if no results exist yet — this surfaces sponsors before \
+their trial reaches a conference. Registries to check:
+{conferences.format_registry_list()}
+Include the registry name, the registry's trial ID (e.g. an NCT number), and \
+a direct URL to the registry entry.
+
+For every lead in every category, also try to identify:
    - The sponsoring biotech or pharmaceutical company, and its primary \
 website domain (e.g. "protaratx.com" — no "https://" or "www.")
-   - A one- to two-sentence summary of the efficacy result and why it's positive
-   - The conference name/year and, if available, the exact presentation \
-date, abstract title, and abstract/presentation number
-   - A direct URL to the abstract or presentation if you can find one \
-(conference abstract library, ASCO Meeting Library, ESMO congress resource \
-library, AUA abstract archive); otherwise a company press release URL \
-announcing the data, noted as such
    - The name and title of the company's CEO or CMO, ONLY if you happen to \
-encounter it naturally while researching the trial (e.g. named in a press \
-release, or as a quoted spokesperson). Do not spend extra search effort \
-specifically hunting for this — a dedicated, verified contact lookup \
-happens separately after your research, so this field is a bonus, not a \
-requirement.
+encounter it naturally while researching (e.g. named in a press release, or \
+as a quoted spokesperson — for a "leadership_change" lead this is usually \
+the lead itself). Do not spend extra search effort specifically hunting for \
+this — a dedicated, verified contact lookup happens separately after your \
+research, so this field is a bonus, not a requirement.
 
-3. Also list any trials/companies you reviewed but excluded, and why (e.g. \
-result was not clearly positive, no commercial sponsor, wrong indication or \
-phase).
+Also list any items you reviewed but excluded, and why (e.g. result was not \
+clearly positive, no commercial sponsor, wrong indication or phase, funding \
+round too old/stale to be a timely lead).
 
-Do not fabricate anything — trial results, names, dates, abstract numbers, \
-or URLs. Omit a field (use null) rather than guess it.
+Do not fabricate anything — results, names, dates, funding amounts, \
+registry IDs, or URLs, in any category. Omit a field (use null) rather than \
+guess it.
 
 Output format — TWO parts, in this exact order:
 
-PART 1 — a short prose section (a few sentences) noting your search scope \
-and any caveats (e.g. if a conference doesn't cover this indication, or you \
-ran low on search budget).
+PART 1 — a short prose section (a few sentences) noting your search scope, \
+which categories you covered, and any caveats (e.g. if a conference doesn't \
+cover this indication, a category came up empty, or you ran low on search \
+budget).
 
 PART 2 — after all prose, output exactly one fenced code block starting \
 with ```json and ending with ```, containing a single JSON object with \
@@ -92,17 +129,21 @@ this exact shape and nothing else inside the fence:
 {{
   "leads": [
     {{
+      "signal_type": "trial_result" | "conference_highlight" | "funding" | "leadership_change" | "new_registration",
       "company_name": "...",
       "company_domain": "..." or null,
-      "trial_name": "...",
-      "drug_asset_name": "...",
-      "conference_name": "...",
+      "trial_name": "..." or null,
+      "drug_asset_name": "..." or null,
+      "conference_name": "..." or null,
       "presentation_date": "..." or null,
-      "result_summary": "...",
-      "abstract_title": "...",
+      "result_summary": "..." or null,
+      "abstract_title": "..." or null,
       "abstract_number": "..." or null,
       "abstract_url": "..." or null,
       "abstract_url_note": "..." or null,
+      "signal_detail": "..." or null,
+      "registry_name": "..." or null,
+      "registry_id": "..." or null,
       "contact_name": "..." or null,
       "contact_title": "..." or null
     }}
@@ -112,8 +153,17 @@ this exact shape and nothing else inside the fence:
   ]
 }}
 
-If you cannot find any qualifying trials, return an empty "leads" array and \
-explain why in PART 1 rather than inventing results.
+Notes on fields shared across categories: "abstract_url"/"abstract_url_note" \
+double as the general "source URL" field for every category (press release, \
+registry entry, or agenda page — not literally always an abstract). \
+"abstract_title" doubles as a general headline field. "signal_detail" is a \
+one- to two-sentence plain-English description of the signal, required for \
+"funding", "leadership_change", and "new_registration" leads (for \
+"trial_result", use "result_summary" instead; "signal_detail" can be null). \
+"registry_name"/"registry_id" are only for "new_registration" leads.
+
+If you cannot find any qualifying leads in a category, leave it out of the \
+"leads" array and explain why in PART 1 rather than inventing results.
 """
 
 
@@ -219,8 +269,36 @@ def _last_name(full_name: str) -> str:
     return parts[-1] if parts else core or full_name.strip()
 
 
+SIGNAL_LABELS = {
+    "trial_result": "Trial Result",
+    "conference_highlight": "Conference Highlight",
+    "funding": "Funding",
+    "leadership_change": "Leadership Change",
+    "new_registration": "New Trial Registration",
+}
+
+
+def _lead_title(lead: dict) -> str:
+    """Best-effort short title for a lead, across all signal types."""
+    return (
+        lead.get("drug_asset_name")
+        or lead.get("trial_name")
+        or lead.get("abstract_title")
+        or (lead.get("signal_detail") or "")[:80]
+        or ""
+    )
+
+
 def draft_email(lead: dict, contact, args: argparse.Namespace):
-    """Render the fixed-template outreach email. Returns (subject, body)."""
+    """Render the fixed-template outreach email. Returns (subject, body).
+
+    Only call this for "trial_result" leads — the opening ("I read with
+    interest your recent paper... Congratulations on this exciting result")
+    is a hard, verbatim CRO requirement written for referencing a presented
+    trial result, and doesn't fit a funding round, leadership change, or new
+    registry filing. Don't loosen/repurpose it for other signal types;
+    render_report() skips drafting for those instead.
+    """
     contact_name = (contact.name if contact and contact.name else None) or lead.get("contact_name")
     if contact and contact.email and contact_name:
         salutation = f"Dear {contact_name},"
@@ -262,13 +340,14 @@ def render_report(
     hunter_enabled: bool,
     repeat_leads: Optional[list] = None,
 ) -> str:
-    conferences = " and ".join(args.conference)
+    conference_list = " and ".join(args.conference)
     years = ", ".join(str(y) for y in args.year)
 
     lines = [
         f"# {args.indication.title()} — BD Leads for {args.sender_company}",
         "",
-        f"**Scope searched:** {conferences} ({years}), {args.phase} trials with positive results.",
+        f"**Scope searched:** {conference_list} ({years}), {args.phase} — trial results, "
+        f"conference highlights, funding, leadership changes, and new trial registrations.",
         "",
     ]
     if preamble:
@@ -283,20 +362,31 @@ def render_report(
     lines.append("---")
 
     for lead, contact in enriched_leads:
-        title = lead.get("drug_asset_name") or lead.get("trial_name") or ""
-        lines += ["", f"## {lead.get('company_name') or 'Unknown company'} — {title}", ""]
-        lines.append(
-            f"**Trial:** {lead.get('trial_name') or ''} | "
-            f"**Conference:** {lead.get('conference_name') or ''} | "
-            f"**Result:** {lead.get('result_summary') or ''}"
-        )
+        signal_type = (lead.get("signal_type") or "trial_result").strip().lower()
+        label = SIGNAL_LABELS.get(signal_type, "Lead")
+        title = _lead_title(lead)
+        lines += ["", f"## [{label}] {lead.get('company_name') or 'Unknown company'} — {title}", ""]
+
+        if signal_type in ("trial_result", "conference_highlight"):
+            lines.append(
+                f"**Trial:** {lead.get('trial_name') or ''} | "
+                f"**Conference:** {lead.get('conference_name') or ''} | "
+                f"**Result:** {lead.get('result_summary') or lead.get('signal_detail') or ''}"
+            )
+        else:
+            detail = lead.get("signal_detail") or ""
+            if signal_type == "new_registration" and lead.get("registry_name"):
+                reg_id = f" ({lead['registry_id']})" if lead.get("registry_id") else ""
+                detail = f"{detail} — registered on {lead['registry_name']}{reg_id}" if detail else f"Registered on {lead['registry_name']}{reg_id}"
+            lines.append(f"**Signal:** {detail}")
         lines.append("")
 
+        source_label = "Abstract" if signal_type in ("trial_result", "conference_highlight") else "Source"
         if lead.get("abstract_url"):
             note = f" — {lead['abstract_url_note']}" if lead.get("abstract_url_note") else ""
-            lines.append(f"**Abstract:** [{lead.get('abstract_title') or 'link'}]({lead['abstract_url']}){note}")
+            lines.append(f"**{source_label}:** [{lead.get('abstract_title') or 'link'}]({lead['abstract_url']}){note}")
         else:
-            lines.append("**Abstract:** no direct link found")
+            lines.append(f"**{source_label}:** no direct link found")
         lines.append("")
 
         if contact and contact.email:
@@ -324,14 +414,23 @@ def render_report(
             lines.append("**Contact:** not publicly available")
         lines.append("")
 
-        subject, body = draft_email(lead, contact, args)
-        lines.append("**Draft email:**")
-        lines.append("")
-        lines.append(f"> Subject: {subject}")
-        lines.append(">")
-        for paragraph in body.split("\n\n"):
-            lines.append("> " + paragraph.replace("\n", "\n> "))
+        if signal_type == "trial_result":
+            subject, body = draft_email(lead, contact, args)
+            lines.append("**Draft email:**")
+            lines.append("")
+            lines.append(f"> Subject: {subject}")
             lines.append(">")
+            for paragraph in body.split("\n\n"):
+                lines.append("> " + paragraph.replace("\n", "\n> "))
+                lines.append(">")
+        else:
+            lines.append(
+                "_No draft email generated — the fixed outreach template's opening "
+                '("I read with interest your recent paper... Congratulations on this '
+                f'exciting result") is written specifically for a {SIGNAL_LABELS["trial_result"].lower()} '
+                "lead and doesn't fit this signal type. Draft this one manually, or ask "
+                "for a dedicated template for this signal type._"
+            )
         lines.append("")
         lines.append("---")
 
@@ -351,7 +450,7 @@ def render_report(
             "",
         ]
         for lead, first_seen in repeat_leads:
-            title = lead.get("drug_asset_name") or lead.get("trial_name") or ""
+            title = _lead_title(lead)
             lines.append(f"- **{lead.get('company_name') or 'Unknown'}** — {title} (first seen {first_seen})")
 
     return "\n".join(lines)

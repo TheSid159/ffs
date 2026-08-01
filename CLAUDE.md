@@ -5,10 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this repository is
 
 A single-purpose business development tool for an imaging CRO ("Elevate
-Imaging"). It uses the Claude API with the web search tool to find recent
-clinical trials with positive results at named oncology/urology
-conferences, looks up a verified CEO/CMO contact for each company via
-Hunter.io, and drafts an outreach email per lead from a fixed template.
+Imaging"). It uses the Claude API with the web search tool to find
+business-development leads across five signal types (see "Five lead signal
+types" below) at named oncology/urology conferences and beyond, looks up a
+verified CEO/CMO contact for each company via Hunter.io, and — for
+trial-result leads only — drafts an outreach email from a fixed template.
 There is no application server or database. There are two front ends over
 the same pipeline: a Tkinter desktop GUI (`gui.py`, the primary one — the
 end user is non-technical and terminal/PowerShell friction was a repeated,
@@ -56,15 +57,14 @@ the Hunter.io integration and GUI commits for the pattern.
 
 ## Architecture
 
-Five modules, no application framework:
+Six modules, no application framework:
 
 - **`agent/bd_agent.py`** — the pipeline, in four stages:
   1. `build_prompt()` renders one research prompt from the CLI args
      (conference list, years, indication, phase). It asks Claude to
-     research trials via web search and return a short prose preamble
-     followed by **one fenced ` ```json ` block** containing structured
-     lead data (company, domain, trial, abstract link, and — only if
-     stumbled upon incidentally — a contact name/title). Claude is
+     research leads via web search across **five signal types** (see below)
+     and return a short prose preamble followed by **one fenced
+     ` ```json ` block** containing structured lead data. Claude is
      explicitly told *not* to spend search budget hunting for contacts;
      that's a separate, more reliable step now.
   2. `run_research()` sends that prompt to `claude-opus-5` via
@@ -78,8 +78,51 @@ Five modules, no application framework:
   4. `enrich_contacts()` calls `hunter_contacts.find_contact()` per lead,
      then `draft_email()` renders the outreach email **entirely in
      Python** from a fixed string template (not asked of the model) using
-     the structured lead data plus whatever contact Hunter confirmed.
-     `render_report()` assembles the final Markdown.
+     the structured lead data plus whatever contact Hunter confirmed —
+     **only for `signal_type == "trial_result"` leads** (see "Five lead
+     signal types" below for why). `render_report()` assembles the final
+     Markdown.
+
+### Five lead signal types
+
+`build_prompt()` asks Claude to categorize every lead with a `signal_type`:
+`trial_result` (positive Phase II result at a named conference — the
+original, only signal type before this was added), `conference_highlight`
+(agenda/keynote/late-breaking-abstract activity at a major oncology/urology
+meeting, grounded against the curated list in `agent/conferences.py` so
+Claude isn't searching blind for what counts as "major"), `funding`
+(financing rounds, IPOs, grants, licensing deals), `leadership_change`
+(new CEO/CMO/CSO), and `new_registration` (a newly registered trial on
+ClinicalTrials.gov or an international equivalent — also listed in
+`agent/conferences.py` — surfacing a sponsor before their trial ever
+reaches a conference).
+
+Several JSON fields are deliberately reused across signal types instead of
+adding a parallel field per type: `abstract_url`/`abstract_url_note` double
+as the general "source URL" (press release, registry entry, agenda page),
+and `abstract_title` doubles as a general headline. `signal_detail` is the
+plain-English description for the four non-trial-result types.
+`registry_name`/`registry_id` are `new_registration`-only.
+
+**`draft_email()` is only called for `trial_result` leads.** The fixed
+opening ("I read with interest your recent paper... Congratulations on
+this exciting result") is a verbatim, hard CRO requirement written for
+referencing an already-presented trial result — it doesn't fit a funding
+round, a new CMO, or a freshly registered trial with no result yet, and
+that requirement says not to loosen or paraphrase it (see "The fixed email
+opening" below). `render_report()` skips the draft-email section for the
+other four types with an explicit note explaining why, rather than
+force-fitting them into a template that would misrepresent the lead. If
+dedicated templates for the other signal types are wanted later, that
+needs its own explicit wording from the user, the same way the
+trial-result template's exact wording was hand-specified — don't invent
+one.
+
+`seen_leads.dedup_key()` prefixes every key with `signal_type` — without
+it, two different signal types for the same company (e.g. a funding lead
+and a leadership-change lead) would both fall back to the same
+`company_name|` key and the second would be wrongly treated as a repeat of
+the first.
 
 - **`agent/hunter_contacts.py`** — Hunter.io API client (stdlib `urllib`,
   no extra dependency). `find_contact(domain, contact_name, api_key,

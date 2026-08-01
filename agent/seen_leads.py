@@ -19,17 +19,40 @@ from pathlib import Path
 def dedup_key(lead: dict) -> str:
     """Build a stable identifier for a lead, preferring fields least likely
     to vary between runs (company_domain, abstract_number) over free-text
-    fields the model rephrases run to run (company_name, trial_name)."""
+    fields the model rephrases run to run (company_name, trial_name).
+
+    Always prefixed with signal_type: a company can have a funding lead AND
+    a leadership-change lead at the same time, and without the prefix both
+    would fall back to the same "company_name|" key and the second would be
+    wrongly treated as a repeat of the first.
+    """
+    signal_type = (lead.get("signal_type") or "trial_result").strip().lower()
     domain = (lead.get("company_domain") or "").strip().lower()
-    abstract_number = (lead.get("abstract_number") or "").strip().lower()
-    trial_name = (lead.get("trial_name") or "").strip().lower()
     company_name = (lead.get("company_name") or "").strip().lower()
 
-    if domain and abstract_number:
-        return f"{domain}|{abstract_number}"
-    if domain and trial_name:
-        return f"{domain}|{trial_name}"
-    return f"{company_name}|{trial_name}"
+    if signal_type == "trial_result":
+        abstract_number = (lead.get("abstract_number") or "").strip().lower()
+        trial_name = (lead.get("trial_name") or "").strip().lower()
+        if domain and abstract_number:
+            return f"{signal_type}|{domain}|{abstract_number}"
+        if domain and trial_name:
+            return f"{signal_type}|{domain}|{trial_name}"
+        return f"{signal_type}|{company_name}|{trial_name}"
+
+    if signal_type == "new_registration":
+        registry_id = (lead.get("registry_id") or "").strip().lower()
+        if domain and registry_id:
+            return f"{signal_type}|{domain}|{registry_id}"
+        return f"{signal_type}|{company_name}|{registry_id}"
+
+    # funding / leadership_change / conference_highlight: no natural unique
+    # ID, so key on the free-text detail too — same variability caveat as
+    # company_name/trial_name above applies (Claude may rephrase between
+    # runs), but colliding two different signals at one company is worse.
+    detail = (lead.get("signal_detail") or lead.get("abstract_title") or "").strip().lower()
+    if domain:
+        return f"{signal_type}|{domain}|{detail}"
+    return f"{signal_type}|{company_name}|{detail}"
 
 
 def load_seen(path: Path) -> dict:
