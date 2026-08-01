@@ -141,6 +141,16 @@ class App(tk.Tk):
             report_path = run_pipeline(args)
             self.log_queue.put(("text", f"\n\nDone! Report saved to: {report_path.resolve()}\n"))
             self.log_queue.put(("done", report_path))
+        except PermissionError as exc:
+            # The most common real-world cause: the previous report is still
+            # open in Word/Notepad/Excel, which locks the file on Windows.
+            msg = (
+                f"Could not save the report — '{exc.filename or args.output}' is open in "
+                "another program (e.g. Word, Notepad, Excel) or is set to read-only. "
+                "Close it (or right-click it, Properties, and untick Read-only), then click Run again."
+            )
+            self.log_queue.put(("text", f"\n\nError: {msg}\n"))
+            self.log_queue.put(("error", msg))
         except Exception as exc:  # surface any failure in the window instead of a silent crash
             self.log_queue.put(("text", f"\n\nError: {exc}\n"))
             self.log_queue.put(("error", str(exc)))
