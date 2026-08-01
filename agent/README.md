@@ -3,15 +3,17 @@
 Business development lead-finder for an imaging CRO. It:
 
 1. Uses Claude with web search to find business-development leads in a given
-   cancer type (default: bladder cancer) across eight signal types: positive
+   cancer type (default: bladder cancer) across eleven signal types: positive
    Phase II trial results at named conferences, conference agenda/keynote/
    late-breaking-abstract highlights (checked against a curated list of
-   major worldwide oncology/urology meetings), biotech funding rounds,
-   CEO/CMO/CSO leadership changes, new trial registrations on
+   major worldwide oncology/urology meetings, plus imaging-science/clinical-
+   ops meetings like SNMMI, RSNA, DIA, and SCOPE Summit), biotech funding
+   rounds, CEO/CMO/CSO leadership changes, new trial registrations on
    ClinicalTrials.gov and international equivalents, FDA/EMA regulatory
-   designations, End-of-Phase 2/regulatory-meeting milestones, and trial
-   expansions to new countries/sites — and returns them all as structured
-   data.
+   designations, End-of-Phase 2/regulatory-meeting milestones, trial
+   expansions to new countries/sites, protocol amendments adding imaging
+   requirements, imaging-role hiring signals, and public vendor-switch
+   signals — and returns them all as structured data.
 2. Looks up a verified CEO/CMO contact for each company via **Hunter.io**,
    gated on a minimum confidence score (default 90/100) — a low-confidence
    guess is never reported as a confirmed contact.
@@ -97,7 +99,8 @@ importing elsewhere.
 The Markdown report has one section per lead, labeled by signal type
 (`[Trial Result]`, `[Conference Highlight]`, `[Funding]`, `[Leadership
 Change]`, `[New Trial Registration]`, `[Regulatory Designation]`,
-`[Regulatory Milestone]`, `[Trial Expansion]`): the detail, a source link,
+`[Regulatory Milestone]`, `[Trial Expansion]`, `[Protocol Amendment]`,
+`[Hiring Signal]`, `[Vendor-Switch Signal]`): the detail, a source link,
 the verified contact (or an explicit "not confirmed" / "not publicly
 available" — it will never invent an email or a confidence score), and a
 draft outreach email. `[Trial Result]` leads always open with:
@@ -109,7 +112,7 @@ draft outreach email. `[Trial Result]` leads always open with:
 > as you progress [drug/asset name] through its next stage of development.
 
 That exact wording was hand-specified and is treated as fixed. The other
-seven signal types get a draft too, but with an opening written by Claude
+ten signal types get a draft too, but with an opening written by Claude
 Code as a starting point rather than hand-specified the same way — the
 report flags those with a note to review the wording before relying on it.
 

@@ -27,6 +27,13 @@ MAJOR_ONCOLOGY_MEETINGS = [
     {"name": "JSMO Annual Meeting (Japanese Society of Medical Oncology)", "region": "Japan", "typical_timing": "July"},
 ]
 
+IMAGING_AND_CLINOPS_MEETINGS = [
+    {"name": "SNMMI Annual Meeting (Society of Nuclear Medicine and Molecular Imaging)", "region": "USA", "typical_timing": "June"},
+    {"name": "RSNA Annual Meeting (Radiological Society of North America)", "region": "USA", "typical_timing": "November/December"},
+    {"name": "DIA Global Annual Meeting (Drug Information Association)", "region": "USA", "typical_timing": "June"},
+    {"name": "SCOPE Summit (Summit for Clinical Ops Executives)", "region": "USA", "typical_timing": "February"},
+]
+
 TRIAL_REGISTRIES = [
     {"name": "ClinicalTrials.gov", "region": "USA / accepts global trials"},
     {"name": "EU Clinical Trials Information System (CTIS)", "region": "European Union"},
@@ -41,6 +48,10 @@ TRIAL_REGISTRIES = [
 
 def format_meeting_list() -> str:
     return "\n".join(f"   - {m['name']} ({m['region']}, typically {m['typical_timing']})" for m in MAJOR_ONCOLOGY_MEETINGS)
+
+
+def format_imaging_clinops_meeting_list() -> str:
+    return "\n".join(f"   - {m['name']} ({m['region']}, typically {m['typical_timing']})" for m in IMAGING_AND_CLINOPS_MEETINGS)
 
 
 def format_registry_list() -> str:

@@ -83,27 +83,44 @@ Six modules, no application framework:
      signal types" below for why). `render_report()` assembles the final
      Markdown.
 
-### Eight lead signal types
+### Eleven lead signal types
 
 `build_prompt()` asks Claude to categorize every lead with a `signal_type`:
 `trial_result` (positive Phase II result at a named conference — the
 original, only signal type before this was added), `conference_highlight`
 (agenda/keynote/late-breaking-abstract activity at a major oncology/urology
 meeting, grounded against the curated list in `agent/conferences.py` so
-Claude isn't searching blind for what counts as "major"), `funding`
-(financing rounds, IPOs, grants, licensing deals — noting if proceeds are
-earmarked for a pivotal/registrational trial specifically, a stronger
-signal than general runway), `leadership_change` (new CEO/CMO/CSO),
-`new_registration` (a newly registered trial on ClinicalTrials.gov or an
-international equivalent — also listed in `agent/conferences.py` —
-surfacing a sponsor before their trial ever reaches a conference),
-`regulatory_designation` (FDA/EMA designations like Breakthrough Therapy,
-Fast Track, Priority Review, Orphan Drug, EMA PRIME), `regulatory_milestone`
-(End-of-Phase 2 or Type B/C meeting outcomes — usually means a pivotal
-trial's design, including imaging endpoints, is being finalized around
-now), and `trial_expansion` (an existing trial expanding to new
-countries/sites — multi-region trials are where centralized imaging review
-becomes valuable versus inconsistent local site reads).
+Claude isn't searching blind for what counts as "major" — also covers
+imaging-science/clinical-ops meetings like SNMMI, RSNA, DIA, and SCOPE
+Summit, since sponsors presenting early-phase imaging biomarker data there
+are prospects even before a pivotal trial), `funding` (financing rounds,
+IPOs, grants, licensing deals — Series B/C+ rounds and IPOs are the
+strongest version since imaging-heavy oncology trials are expensive and
+this often precedes an imaging-vendor RFP by a few months; also noting if
+proceeds are earmarked for a pivotal/registrational trial specifically),
+`leadership_change` (new CEO/CMO/CSO), `new_registration` (a newly
+registered trial on ClinicalTrials.gov or an international equivalent —
+also listed in `agent/conferences.py` — surfacing a sponsor before their
+trial ever reaches a conference), `regulatory_designation` (FDA/EMA
+designations like Breakthrough Therapy, Fast Track, Priority Review,
+Orphan Drug, EMA PRIME), `regulatory_milestone` (End-of-Phase 2 or Type
+B/C meeting outcomes — usually means a pivotal trial's design, including
+imaging endpoints, is being finalized around now), `trial_expansion` (an
+existing trial expanding to new countries/sites — multi-region trials are
+where centralized imaging review becomes valuable versus inconsistent
+local site reads), `protocol_amendment` (an amendment adding or changing
+an imaging-related requirement on an existing trial — often means a new
+imaging need has emerged, or a current vendor isn't working out, though
+the prompt explicitly tells Claude not to speculate about a specific
+vendor by name), `hiring_signal` (a company publicly hiring for an
+imaging-specific clinical role like "Director of Imaging" — usually means
+they're about to manage an imaging CRO relationship, not insource it
+away), and `vendor_switch_signal` (a public, citable statement — press
+release, LinkedIn post, conference talk — describing imaging data delays
+or QC issues with a current vendor; the prompt treats this as the most
+sensitive category and explicitly forbids naming a specific competing
+vendor unless the source itself already does so, and says to leave it out
+entirely rather than repeat an unverified claim about a real company).
 
 For `trial_result` and `new_registration` leads specifically, the prompt
 also asks Claude to fold two extra observations into the existing
@@ -127,7 +144,7 @@ plain-English description for every type except `trial_result`.
 `_opening_and_transition()`, but only the `trial_result` opening ("I read
 with interest your recent paper... Congratulations on this exciting
 result") is a verbatim, hard CRO requirement (see "The fixed email
-opening" below) — never loosen or paraphrase it. The other seven openings
+opening" below) — never loosen or paraphrase it. The other ten openings
 were drafted by Claude Code at the user's explicit request as a starting
 point, NOT hand-specified the same way; `render_report()` marks those with
 an inline note ("drafted by Claude Code... review the wording") so the
@@ -135,6 +152,15 @@ distinction is visible in the report itself, not just in this file. If the
 user gives exact wording for a given signal type later (the same way they
 did for `trial_result`), update `_opening_and_transition()` and drop that
 type's review note.
+
+`vendor_switch_signal`'s opening deliberately does NOT reference the
+complaint/pain-point content itself (e.g. never says anything like "I
+heard you're having imaging delays with your current vendor") — repeating
+a public complaint about a competitor back to the prospect would read as
+opportunistic, not professional. It opens generically about running
+imaging-intensive trials instead. Don't "improve" this by making it more
+specific to the signal_detail; that specificity is exactly what it's
+avoiding.
 
 `seen_leads.dedup_key()` prefixes every key with `signal_type` — without
 it, two different signal types for the same company (e.g. a funding lead

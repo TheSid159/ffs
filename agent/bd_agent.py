@@ -50,10 +50,10 @@ imaging services (central image review, endpoint assessment, imaging \
 biomarkers) to biotech and pharmaceutical sponsors running clinical trials.
 
 Task — using web search, find business-development leads in {args.indication} \
-across EIGHT signal categories. A lead is any biotech/pharma company activity \
-that could be a reason to introduce {args.sender_company} as an imaging \
-vendor. Search for as many categories as your search budget allows; note in \
-your PART 1 summary if you had to skip or under-search any category.
+across ELEVEN signal categories. A lead is any biotech/pharma company \
+activity that could be a reason to introduce {args.sender_company} as an \
+imaging vendor. Search for as many categories as your search budget allows; \
+note in your PART 1 summary if you had to skip or under-search any category.
 
 CATEGORY 1 — "trial_result": {args.phase} clinical trial results in \
 {args.indication} presented at the {conference_list} annual meeting(s) in \
@@ -77,13 +77,20 @@ Look for published agendas, keynote speaker announcements, and late-breaking \
 abstract titles in {args.indication} — company/trial activity that's \
 upcoming or newly announced, not necessarily already presented with a result \
 yet. Include the headline/title, conference name, date if known, and a \
-direct URL to the agenda page, program listing, or announcement.
+direct URL to the agenda page, program listing, or announcement. Also check \
+imaging-science and clinical-operations meetings, where sponsors presenting \
+early-phase imaging biomarker data in {args.indication} are strong \
+prospects — they're actively generating imaging endpoints even before a \
+pivotal trial:
+{conferences.format_imaging_clinops_meeting_list()}
 
 CATEGORY 3 — "funding": biotech or pharmaceutical companies working in \
-{args.indication} that have recently secured funding (venture round, IPO, \
-grant, or partnership/licensing deal with an upfront payment). Include the \
-funding type/amount if reported, and a URL to the announcement or press \
-release.
+{args.indication} that have recently secured funding — Series B/C+ venture \
+rounds and IPOs are the strongest version of this signal, since imaging-heavy \
+oncology trials are expensive and this kind of raise often precedes an \
+imaging-vendor RFP by a few months, but also include grants and partnership/ \
+licensing deals with an upfront payment. Include the funding type/amount if \
+reported, and a URL to the announcement or press release.
 
 CATEGORY 4 — "leadership_change": companies working in {args.indication} \
 that recently appointed a new CEO, CMO, or CSO. This is directly useful for \
@@ -117,6 +124,35 @@ recently expanded to new countries or added sites. Multi-region/multi-site \
 trials are where centralized, standardized imaging review becomes valuable \
 versus relying on inconsistent local site reads — this is a strong direct \
 signal. Include what expanded and a URL.
+
+CATEGORY 9 — "protocol_amendment": a protocol amendment to an existing \
+{args.indication} trial that adds or changes an imaging-related requirement \
+(e.g. adding an imaging endpoint, switching imaging assessment criteria, \
+adding central/blinded independent review). Check registry version/amendment \
+history where visible (e.g. ClinicalTrials.gov's "Study Record Versions" \
+tab), not just the current listing. This can mean a new imaging need has \
+emerged, or that a current imaging vendor isn't working out — a time-\
+sensitive signal, though don't speculate about a specific vendor by name. \
+Include what changed and a URL.
+
+CATEGORY 10 — "hiring_signal": a company in {args.indication} publicly \
+hiring for an imaging-specific clinical role (e.g. "Director of Imaging", \
+"Clinical Operations Lead, Imaging", "Imaging Biomarker Lead") — a fairly \
+strong tell that an imaging-heavy trial is coming, since this role usually \
+manages an imaging CRO relationship rather than replacing one. Include the \
+job title, company, and a URL to the posting.
+
+CATEGORY 11 — "vendor_switch_signal": a company in {args.indication} \
+publicly describing imaging data delays, quality-control issues, or \
+dissatisfaction with a current imaging vendor on one of their trials — in a \
+press release, LinkedIn post, or conference talk. This is a strong, direct \
+pain-point signal, but it is also the category most likely to not exist for \
+a given search, and the most sensitive: only include it if you find an \
+actual, citable public statement, never a rumor or inference, and never \
+name a specific competing vendor unless the source itself already does so \
+explicitly and publicly. If in doubt, leave it out rather than risk \
+repeating something unverified about a real company. Include what was said \
+and a URL to the source.
 
 For every lead in every category, also try to identify:
    - The sponsoring biotech or pharmaceutical company, and its primary \
@@ -164,7 +200,7 @@ this exact shape and nothing else inside the fence:
 {{
   "leads": [
     {{
-      "signal_type": "trial_result" | "conference_highlight" | "funding" | "leadership_change" | "new_registration" | "regulatory_designation" | "regulatory_milestone" | "trial_expansion",
+      "signal_type": "trial_result" | "conference_highlight" | "funding" | "leadership_change" | "new_registration" | "regulatory_designation" | "regulatory_milestone" | "trial_expansion" | "protocol_amendment" | "hiring_signal" | "vendor_switch_signal",
       "company_name": "...",
       "company_domain": "..." or null,
       "trial_name": "..." or null,
@@ -331,6 +367,9 @@ SIGNAL_LABELS = {
     "regulatory_designation": "Regulatory Designation",
     "regulatory_milestone": "Regulatory Milestone",
     "trial_expansion": "Trial Expansion",
+    "protocol_amendment": "Protocol Amendment",
+    "hiring_signal": "Hiring Signal",
+    "vendor_switch_signal": "Vendor-Switch Signal",
 }
 
 
@@ -350,7 +389,7 @@ def _opening_and_transition(lead: dict, args: argparse.Namespace) -> tuple:
     type. Only the "trial_result" case is a hard, verbatim CRO requirement
     ("I read with interest your recent paper... Congratulations on this
     exciting result" — see CLAUDE.md "The fixed email opening") — never
-    loosen or paraphrase it. The other seven were drafted by Claude Code at
+    loosen or paraphrase it. The other ten were drafted by Claude Code at
     the user's request as a starting point and are NOT hard-specified the
     same way; treat them as adjustable until the user signs off on exact
     wording, the same way they did for trial_result.
@@ -396,6 +435,23 @@ def _opening_and_transition(lead: dict, args: argparse.Namespace) -> tuple:
         detail = lead.get("signal_detail") or "this trial expansion"
         opening = f"I saw that {company} recently expanded a trial — {detail} Congratulations on the expansion."
         transition = f"Given this, {intro} as you scale imaging assessment across these new sites."
+
+    elif signal_type == "protocol_amendment":
+        detail = lead.get("signal_detail") or "an imaging-related requirement"
+        opening = f"I saw that {company} recently amended the protocol for {asset} — {detail}"
+        transition = f"Given this, {intro} as you implement this updated imaging requirement."
+
+    elif signal_type == "hiring_signal":
+        detail = lead.get("signal_detail") or "an opening for an imaging-related role"
+        opening = f"I saw that {company} recently posted an opening for an imaging-related role — {detail} Congratulations on the growth."
+        transition = f"Given this, {intro} as you build out your imaging capabilities for upcoming trials."
+
+    elif signal_type == "vendor_switch_signal":
+        # Deliberately doesn't reference the complaint/pain-point content
+        # itself — repeating a public complaint about a competitor back to
+        # the prospect would read as opportunistic, not professional.
+        opening = f"I understand {company} is running imaging-intensive trials in {args.indication}, and wanted to reach out."
+        transition = f"{intro}, with reliable turnaround and rigorous quality control built into our process."
 
     else:  # "trial_result" — the hard-specified template, do not alter
         abstract_ref = f'"{lead.get("abstract_title") or lead.get("trial_name") or "your recent presentation"}"'
@@ -457,7 +513,8 @@ def render_report(
         "",
         f"**Scope searched:** {conference_list} ({years}), {args.phase} — trial results, "
         f"conference highlights, funding, leadership changes, new trial registrations, "
-        f"regulatory designations/milestones, and trial expansions.",
+        f"regulatory designations/milestones, trial expansions, protocol amendments, "
+        f"hiring signals, and vendor-switch signals.",
         "",
     ]
     if preamble:

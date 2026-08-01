@@ -46,11 +46,12 @@ def dedup_key(lead: dict) -> str:
         return f"{signal_type}|{company_name}|{registry_id}"
 
     # Every other signal type (funding, leadership_change, conference_highlight,
-    # regulatory_designation, regulatory_milestone, trial_expansion): no
-    # natural unique ID, so key on the free-text detail too — same
-    # variability caveat as company_name/trial_name above applies (Claude
-    # may rephrase between runs), but colliding two different signals at
-    # one company is worse.
+    # regulatory_designation, regulatory_milestone, trial_expansion,
+    # protocol_amendment, hiring_signal, vendor_switch_signal): no natural
+    # unique ID, so key on the free-text detail too — same variability
+    # caveat as company_name/trial_name above applies (Claude may rephrase
+    # between runs), but colliding two different signals at one company is
+    # worse.
     detail = (lead.get("signal_detail") or lead.get("abstract_title") or "").strip().lower()
     if domain:
         return f"{signal_type}|{domain}|{detail}"
