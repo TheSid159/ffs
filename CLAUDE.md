@@ -57,7 +57,7 @@ the Hunter.io integration and GUI commits for the pattern.
 
 ## Architecture
 
-Six modules, no application framework:
+Seven modules, no application framework:
 
 - **`agent/bd_agent.py`** — the pipeline, in four stages:
   1. `build_prompt()` renders one research prompt from the CLI args
@@ -237,6 +237,64 @@ Contact lookup is **optional** — if `HUNTER_API_KEY` isn't set,
 `enrich_contacts()` returns `None` for every contact and the report says
 so explicitly rather than silently omitting the caveat.
 
+- **`agent/clinicaltrials_gov.py`** — direct integration with the
+  ClinicalTrials.gov API v2 (`https://clinicaltrials.gov/api/v2/studies`,
+  free, no API key, stdlib `urllib` like `hunter_contacts.py`). Unlike the
+  rest of the pipeline, this does **no LLM interpretation at all**: it
+  queries ClinicalTrials.gov directly with a literal filter and only
+  returns trials that actually matched, so its leads are exact-match and
+  reproducible run to run rather than Claude's summary of what it found
+  searching the web. Two signal types, both new: `trial_milestone_approaching`
+  (a Phase 1 or Phase 1/2 trial in the target indication, `RECRUITING` or
+  `ACTIVE_NOT_RECRUITING`, with a primary completion date 60-90 days out —
+  a lead-time signal that the sponsor is about to plan its next phase,
+  imaging vendor included, well before any result becomes public) and
+  `trial_recently_completed` (same phase scope, status `COMPLETED`, with a
+  completion date in roughly the last 14 days — the same signal caught
+  from the other side once it's actually happened). `find_leads()` is
+  called from `bd_agent.main()` and `gui_logic.run_pipeline()` right after
+  `parse_research_output()`, and its leads are appended to Claude's before
+  contact enrichment/rendering — same `render_report()`/`render_csv()`/
+  `draft_email()` code path, since it reuses the lead dict shape (`company_name`,
+  `signal_detail`, `abstract_url`, `registry_name`/`registry_id`, etc.).
+  `--no-ctgov` (CLI) / `no_ctgov` (GUI, currently hardcoded `False`, no
+  checkbox yet) skips it. `filter.phase=PHASE1` is deliberately the only
+  phase filter used for both lookups — ClinicalTrials.gov's phase filter is
+  OR-matching against a study's *phases list*, so filtering on `PHASE1`
+  alone already includes combined "Phase 1/Phase 2" studies (which list
+  both) while excluding pure Phase 2 studies, which is exactly the "Phase 1
+  or Phase 1/Phase 2" scope wanted — no need for a `PHASE1_PHASE2` filter
+  value (it doesn't exist). `find_recently_completed()` filters on
+  `AREA[CompletionDate]RANGE[...]`, not `LastUpdatePostDate` — the actual
+  completion date is a much more direct proxy for "just transitioned to
+  Completed" than an unrelated metadata edit would be, since the v2 API
+  doesn't expose discrete status-change events. `seen_leads.dedup_key()`
+  keys both new signal types on `registry_id` (the NCT number) the same
+  way it already did for `new_registration`, rather than falling through
+  to the generic free-text-detail fallback — the detail text embeds a
+  completion-date estimate that could drift slightly between runs even for
+  the identical trial, where the NCT number never does.
+
+  This was scoped down from a larger proposal (ClinicalTrials.gov API +
+  SEC EDGAR 8-K/10-Q filings + PR Newswire/Business Wire/GlobeNewswire RSS
+  + paid databases like BioPharmCatalyst/AlphaSense/Citeline, plus tracking
+  NDA/BLA-stage triggers like BICR re-reads and sNDA/sBLA filings) to just
+  this one free, no-key, structured-data source first, built end-to-end and
+  proven, rather than four sources half-built at once. Also deferred from
+  the ClinicalTrials.gov piece itself: the proposal's third trigger, "a new
+  Phase 2 filing by the same sponsor that previously ran a Phase 1 trial" —
+  that needs cross-referencing a sponsor's trial history across runs
+  (stateful tracking, similar in kind to `seen_leads.py` but keyed on
+  sponsor rather than lead), which is a meaningfully bigger feature than a
+  single stateless query and wasn't worth building as a shallow
+  approximation. Not yet verified against a live API response — this dev
+  sandbox's network policy blocks `clinicaltrials.gov` outright, so all
+  testing here used `unittest.mock.patch` on `clinicaltrials_gov._get()`
+  with a fabricated study JSON shaped from the v2 API's documented schema;
+  the query parameter names and Essie `AREA[]RANGE[]` date syntax are
+  confirmed from ClinicalTrials.gov's own documentation, but a real run
+  should be checked once by the user before relying on it.
+
 - **`agent/seen_leads.py`** — local dedup so re-running doesn't resurface
   the same leads. `dedup_key()` deliberately prefers `company_domain` +
   `abstract_number` over `company_name`/`trial_name`: Claude's exact
@@ -409,6 +467,14 @@ complete-looking report.
 
 ### Known gaps (not yet implemented)
 
+- Additional BD data sources beyond ClinicalTrials.gov (see
+  `agent/clinicaltrials_gov.py` above): SEC EDGAR 8-K/10-Q filing alerts
+  for public micro/small-cap biotechs, PR Newswire/Business Wire/
+  GlobeNewswire RSS monitoring, paid databases (BioPharmCatalyst,
+  AlphaSense, Citeline/Trialtrove), NDA/BLA-stage triggers (BICR re-reads,
+  exploratory endpoint analyses, sNDA/sBLA filings), and cross-referencing
+  a sponsor's Phase 1 history against new Phase 2 filings. All deliberately
+  deferred in favor of shipping one source end-to-end first.
 - Hunter.io's Domain Search only surfaces contacts Hunter has already
   crawled/indexed for that domain — smaller biotechs with thin public web
   presence may still come back with no confirmed contact. This is a data

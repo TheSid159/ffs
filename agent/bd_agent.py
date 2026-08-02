@@ -32,6 +32,7 @@ from typing import Optional
 
 import anthropic
 
+import clinicaltrials_gov
 import conferences
 import hunter_contacts
 import seen_leads
@@ -435,6 +436,8 @@ SIGNAL_LABELS = {
     "protocol_amendment": "Protocol Amendment",
     "hiring_signal": "Hiring Signal",
     "vendor_switch_signal": "Vendor-Switch Signal",
+    "trial_milestone_approaching": "Trial Milestone Approaching",
+    "trial_recently_completed": "Trial Recently Completed",
 }
 
 
@@ -518,6 +521,16 @@ def _opening_and_transition(lead: dict, args: argparse.Namespace) -> tuple:
         opening = f"I understand {company} is running imaging-intensive trials in {args.indication}, and wanted to reach out."
         transition = f"{intro}, with reliable turnaround and rigorous quality control built into our process."
 
+    elif signal_type == "trial_milestone_approaching":
+        trial = lead.get("trial_name") or "your Phase 1 trial"
+        opening = f"I saw via ClinicalTrials.gov that {company}'s Phase 1 trial ({trial}) has a primary completion date approaching in the next few months."
+        transition = f"Given this, {intro} as you begin planning imaging needs for the next phase of development."
+
+    elif signal_type == "trial_recently_completed":
+        trial = lead.get("trial_name") or "your Phase 1 trial"
+        opening = f"I saw via ClinicalTrials.gov that {company}'s Phase 1 trial ({trial}) recently completed. Congratulations on reaching this milestone."
+        transition = f"Given this, {intro} as you plan the next phase of development."
+
     else:  # "trial_result" — the hard-specified template, do not alter
         abstract_ref = f'"{lead.get("abstract_title") or lead.get("trial_name") or "your recent presentation"}"'
         if lead.get("abstract_number"):
@@ -579,7 +592,8 @@ def render_report(
         f"**Scope searched:** {conference_list} ({years}), {args.phase} — trial results, "
         f"conference highlights, funding, leadership changes, new trial registrations, "
         f"regulatory designations/milestones, trial expansions, protocol amendments, "
-        f"hiring signals, and vendor-switch signals.",
+        f"hiring signals, and vendor-switch signals; plus a direct ClinicalTrials.gov "
+        f"check for Phase 1 trials nearing or past their primary completion date.",
         "",
     ]
     if preamble:
@@ -812,12 +826,25 @@ def main() -> None:
         action="store_true",
         help="Show every lead this run, even ones already recorded in --seen-file, and don't update it.",
     )
+    parser.add_argument(
+        "--no-ctgov",
+        action="store_true",
+        help="Skip the direct ClinicalTrials.gov lookup (free, no API key, no LLM involved) for "
+        "Phase 1 trials nearing or past their primary completion date.",
+    )
     args = parser.parse_args()
     if not args.output:
         args.output = default_output_basename(args.indication, args.conference, args.year) + ".md"
 
     raw_response = run_research(args)
     preamble, leads, excluded = parse_research_output(raw_response)
+
+    if not args.no_ctgov:
+        print("\nChecking ClinicalTrials.gov for Phase 1 trials nearing/past primary completion...", file=sys.stderr)
+        ctgov_leads = clinicaltrials_gov.find_leads(args.indication)
+        if ctgov_leads:
+            print(f"[Found {len(ctgov_leads)} lead(s) via ClinicalTrials.gov]", file=sys.stderr)
+        leads = leads + ctgov_leads
 
     out_path = Path(args.output)
 

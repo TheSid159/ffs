@@ -17,13 +17,20 @@ Business development lead-finder for an imaging CRO. It:
    expansions to new countries/sites, protocol amendments adding imaging
    requirements, imaging-role hiring signals, and public vendor-switch
    signals — and returns them all as structured data.
-2. Looks up a verified CEO/CMO contact for each company via **Hunter.io**,
+2. Separately, queries the ClinicalTrials.gov API directly (free, no API
+   key, no LLM involved) for two more signals: a Phase 1 (or Phase 1/2)
+   trial in your indication with a primary completion date 60-90 days out,
+   and one whose status just completed — both are early lead-time signals
+   that a sponsor is about to plan its next phase. These are exact-match
+   against ClinicalTrials.gov's own data, not Claude's interpretation. Pass
+   `--no-ctgov` to skip this and use Claude's web search alone.
+3. Looks up a verified CEO/CMO contact for each company via **Hunter.io**,
    gated on a minimum confidence score (default 90/100) — a low-confidence
    guess is never reported as a confirmed contact.
-3. Renders a preliminary outreach email per lead from a **fixed template**
+4. Renders a preliminary outreach email per lead from a **fixed template**
    (defined in Python, not left to the model to reproduce), always opening
    with a reference to the specific trial result.
-4. Remembers what it's already shown you (`seen_leads.json`, created
+5. Remembers what it's already shown you (`seen_leads.json`, created
    automatically next to the report) so re-running doesn't resurface the
    same leads every time.
 
@@ -116,7 +123,8 @@ The Markdown report has one section per lead, labeled by signal type
 (`[Trial Result]`, `[Conference Highlight]`, `[Funding]`, `[Leadership
 Change]`, `[New Trial Registration]`, `[Regulatory Designation]`,
 `[Regulatory Milestone]`, `[Trial Expansion]`, `[Protocol Amendment]`,
-`[Hiring Signal]`, `[Vendor-Switch Signal]`): the detail, a source link,
+`[Hiring Signal]`, `[Vendor-Switch Signal]`, `[Trial Milestone
+Approaching]`, `[Trial Recently Completed]`): the detail, a source link,
 the verified contact (or an explicit "not confirmed" / "not publicly
 available" — it will never invent an email or a confidence score), and a
 draft outreach email. `[Trial Result]` leads always open with:

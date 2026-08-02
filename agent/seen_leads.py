@@ -39,7 +39,11 @@ def dedup_key(lead: dict) -> str:
             return f"{signal_type}|{domain}|{trial_name}"
         return f"{signal_type}|{company_name}|{trial_name}"
 
-    if signal_type == "new_registration":
+    if signal_type in ("new_registration", "trial_milestone_approaching", "trial_recently_completed"):
+        # The latter two are ClinicalTrials.gov-sourced (see clinicaltrials_gov.py)
+        # and always carry a real NCT number as registry_id — a far more stable
+        # key than the free-text detail fallback below, which embeds a
+        # completion-date estimate that could shift slightly between runs.
         registry_id = (lead.get("registry_id") or "").strip().lower()
         if domain and registry_id:
             return f"{signal_type}|{domain}|{registry_id}"

@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import bd_agent
+import clinicaltrials_gov
 import conference_dates
 import seen_leads
 
@@ -110,6 +111,7 @@ def build_args(form: dict) -> argparse.Namespace:
         hunter_delay_ms=4000,
         seen_file=str(app_dir() / "seen_leads.json"),
         no_dedup=False,
+        no_ctgov=False,
     )
 
 
@@ -118,6 +120,13 @@ def run_pipeline(args: argparse.Namespace) -> Path:
     of just printing it, and takes an already-built Namespace (no argv)."""
     raw_response = bd_agent.run_research(args)
     preamble, leads, excluded = bd_agent.parse_research_output(raw_response)
+
+    if not args.no_ctgov:
+        print("\nChecking ClinicalTrials.gov for Phase 1 trials nearing/past primary completion...")
+        ctgov_leads = clinicaltrials_gov.find_leads(args.indication)
+        if ctgov_leads:
+            print(f"[Found {len(ctgov_leads)} lead(s) via ClinicalTrials.gov]")
+        leads = leads + ctgov_leads
 
     out_path = Path(args.output)
 
