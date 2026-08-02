@@ -12,7 +12,7 @@ result twice; it says nothing about outreach status.
 """
 
 import json
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 
@@ -110,6 +110,37 @@ def load_seen(path: Path) -> dict:
 
 def save_seen(path: Path, seen: dict) -> None:
     path.write_text(json.dumps(seen, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def recent_entries(path: Path, within_days: int) -> list:
+    """Return a thin lead-shaped list — [{"company_name": ..., "signal_detail": ...}]
+    — for every seen-leads entry at `path` last seen within `within_days`
+    days. Used for lightweight, zero-cost cross-search awareness between two
+    *paid* Claude searches (signal-sweep and phase-transitions — see
+    bd_agent.build_signal_sweep_prompt()/build_phase_transition_prompt()):
+    unlike the free trial-signals pre-check, there's no way to re-run the
+    other paid search for free just to see what it already found, so this
+    reads its persisted dedup state instead. Deliberately thin — a
+    seen-leads entry only ever stores company_name/trial_name/first_seen/
+    last_seen (see split_new_and_repeats()), not the original lead's full
+    signal_detail — good enough to tell Claude "this company/trial was
+    already reported by the other search recently," not a substitute for
+    that search's own report. Missing or unreadable file returns []."""
+    seen = load_seen(path)
+    if not seen:
+        return []
+    cutoff = (date.today() - timedelta(days=within_days)).isoformat()
+    entries = []
+    for value in seen.values():
+        if (value.get("last_seen") or "") >= cutoff:
+            trial = value.get("trial_name")
+            entries.append(
+                {
+                    "company_name": value.get("company_name"),
+                    "signal_detail": f"previously reported (trial/asset: {trial})" if trial else "previously reported",
+                }
+            )
+    return entries
 
 
 def split_new_and_repeats(leads: list, seen: dict) -> tuple:

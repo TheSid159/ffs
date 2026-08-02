@@ -1,26 +1,27 @@
 # agent
 
-Business development lead-finder for an imaging CRO. It runs **three
+Business development lead-finder for an imaging CRO. It runs **four
 independent searches**, each producing its own report, kept deliberately
-separate because their cost/scope profiles differ:
+separate because their cost/scope profiles — and cadences — differ:
 
 ### 1. Conference search (Claude web research — costs API usage)
 
 Uses Claude with web search to find business-development leads in a given
-cancer type (default: bladder cancer) across eleven signal types: positive
-Phase II trial results at named conferences, conference agenda/keynote/
-late-breaking-abstract highlights (checked against a curated list of
-major worldwide oncology/urology/immuno-oncology meetings, plus theranostics/
-molecular-imaging and clinical-ops meetings like SNMMI, EANM, WMIC, RSNA,
-DIA, and SCOPE Summit — smaller regional/subspecialty meetings aren't
-pre-listed, but are actively searched for when they fall in the same
-window as a major meeting already in scope), biotech funding rounds,
-CEO/CMO/CSO leadership changes, new trial registrations on
-ClinicalTrials.gov and international equivalents, FDA/EMA regulatory
-designations, End-of-Phase 2/regulatory-meeting milestones, trial
-expansions to new countries/sites, protocol amendments adding imaging
-requirements, imaging-role hiring signals, and public vendor-switch
-signals.
+cancer type (default: bladder cancer) across the **two conference-anchored
+signal types**: positive Phase II trial results at named conferences, and
+conference agenda/keynote/late-breaking-abstract highlights (checked
+against a curated list of major worldwide oncology/urology/immuno-oncology
+meetings, plus theranostics/molecular-imaging and clinical-ops meetings
+like SNMMI, EANM, WMIC, RSNA, DIA, and SCOPE Summit — smaller
+regional/subspecialty meetings aren't pre-listed, but are actively
+searched for when they fall in the same window as a major meeting already
+in scope). Meant to run whenever a relevant conference is coming up — an
+irregular cadence. The other nine BD signal types (funding, leadership
+changes, new registrations, regulatory designations/milestones, trial
+expansions, protocol amendments, hiring signals, vendor-switch signals)
+used to live in this same search but are now their own search — see
+"4. Signal sweep search" below — since they aren't tied to any
+conference's timing and deserve a more regular check.
 
 ### 2. Trial signals search (free, deterministic — no LLM, no API cost)
 
@@ -69,14 +70,36 @@ Claude focuses its (paid) search budget on finding what those three fixed
 sources missed, rather than re-confirming the same leads. Those free
 findings show up in the phase-transition report too, in their own
 "already found for free" section, alongside whatever Claude found on its
-own.
+own. It also checks the signal-sweep search's recent history (see below)
+the same way, since two of that search's signal types can describe the
+same kind of event.
 
 Costs API usage like the conference search, but is a separate search
 (separate button/subcommand, separate report, separate history) since it's
 a different kind of research task — one signal hunted broadly, rather than
-eleven signals hunted at named conferences.
+several signals hunted at named conferences.
 
-### All three searches
+### 4. Signal sweep search (Claude web research — costs API usage)
+
+Uses Claude with web search to find business-development leads across the
+**nine non-conference-anchored signal types** — the ones that used to live
+in the conference search until it became clear they don't belong on a
+conference's irregular schedule: biotech funding rounds, CEO/CMO/CSO
+leadership changes, new trial registrations on ClinicalTrials.gov and
+international equivalents, FDA/EMA regulatory designations,
+End-of-Phase-2/regulatory-meeting milestones, trial expansions to new
+countries/sites, protocol amendments adding imaging requirements,
+imaging-role hiring signals, and public vendor-switch signals, for the last
+N days (default 30).
+
+Meant to run on its own **regular cadence** (e.g. weekly) — unlike the
+conference search, nothing here is tied to when a conference happens to
+fall, so there's no reason to wait for one. Checks the phase-transitions
+search's recent history the same way phase-transitions checks it back (see
+above), since a couple of these signal types can describe the same kind of
+event as a Phase 1-to-Phase 2 transition.
+
+### All four searches
 
 - Look up a verified CEO/CMO contact for each company via **Hunter.io**,
   gated on a minimum confidence score (default 90/100) — a low-confidence
@@ -113,7 +136,7 @@ changed to `[Gmail]/Drafts`.
 
 1. Get an Anthropic API key from https://console.anthropic.com (Settings →
    API Keys), or run `ant auth login` if you have the Anthropic CLI. Needed
-   for the conference search and the phase-transition search — the
+   for the conference, phase-transition, and signal-sweep searches — the
    trial-signals search doesn't use Claude at all.
 2. (Optional, recommended) Get a Hunter.io API key from
    https://hunter.io/api-keys for verified contact lookup. Without one, the
@@ -133,12 +156,12 @@ terminal, no environment variables, no editing files. Your keys and last-
 used settings are saved locally to `gui_config.json` (gitignored — never
 commit it) and pre-filled next time, so you only type them once.
 
-There are **three independent buttons**: **Search Conferences** and
-**Search Phase Transitions** (both need your Anthropic API key) and
-**Search Trial Signals** (free, no Anthropic key needed). Click any one,
-watch progress in the shared log window, then use the matching
-**Open ... Report** button when it's done. Running one never affects
-another's report or history.
+There are **four independent buttons**: **Search Conferences**, **Search
+Phase Transitions**, and **Search Signal Sweep** (all three need your
+Anthropic API key) and **Search Trial Signals** (free, no Anthropic key
+needed). Click any one, watch progress in the shared log window, then use
+the matching **Open ... Report** button when it's done. Running one never
+affects another's report or history.
 
 At the top of the window is a **Conference Calendar** banner that flags
 any major meeting starting within the next 45 days, so you know when it's
@@ -167,11 +190,11 @@ file itself lives, not wherever you happen to run it from. Re-run the same
 
 ## Run — command line (alternative)
 
-Three subcommands, matching the three searches above:
+Four subcommands, matching the four searches above:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...    # needed for "conferences" and "phase-transitions"
-export HUNTER_API_KEY=...              # optional, all three subcommands
+export ANTHROPIC_API_KEY=sk-ant-...    # needed for "conferences", "phase-transitions", and "signal-sweep"
+export HUNTER_API_KEY=...              # optional, all four subcommands
 
 # Conference search (costs API usage)
 python bd_agent.py conferences \
@@ -200,18 +223,27 @@ python bd_agent.py phase-transitions \
   --sender-title "Medical Director" \
   --sender-company "Elevate Imaging" \
   --hunter-min-confidence 90
+
+# Signal sweep search (costs API usage) — meant to run on a regular cadence, e.g. weekly
+python bd_agent.py signal-sweep \
+  --indication "bladder cancer" \
+  --days 30 \
+  --sender-name "Dr. Darren Brennan" \
+  --sender-title "Medical Director" \
+  --sender-company "Elevate Imaging" \
+  --hunter-min-confidence 90
 ```
 
-`--output` is optional on all three — leave it out and the report/CSV are
+`--output` is optional on all four — leave it out and the report/CSV are
 named from your search parameters (e.g.
 `bladder_cancer_ASCO_GU_ASCO_ESMO_AUA_2025_2026_leads_report.md` for the
 conference search, `bladder_cancer_trial_signals_report.md` for the
 trial-signals search, `bladder_cancer_phase_transition_report.md` for the
-phase-transition search), so re-running with different parameters — or
-running a different search — won't silently overwrite an unrelated
-earlier report. Pass `--output some_name.md` to pick your own name
-instead. Same behavior in the GUI — leave the "Output file" field blank to
-auto-name.
+phase-transition search, `bladder_cancer_signal_sweep_report.md` for the
+signal-sweep search), so re-running with different parameters — or running
+a different search — won't silently overwrite an unrelated earlier report.
+Pass `--output some_name.md` to pick your own name instead. Same behavior
+in the GUI — leave the "Output file" field blank to auto-name.
 
 On Windows, `run_windows.bat.example` is a template for a double-clickable
 version of the conference-search command (copy to `run_windows.bat`, fill
@@ -226,19 +258,19 @@ Each search writes **two files** of its own: a Markdown report and a CSV
 tracking in a spreadsheet or importing elsewhere. Nothing is ever sent.
 
 The Markdown report has one section per lead, labeled by signal type —
-conference search: `[Trial Result]`, `[Conference Highlight]`, `[Funding]`,
-`[Leadership Change]`, `[New Trial Registration]`, `[Regulatory
-Designation]`, `[Regulatory Milestone]`, `[Trial Expansion]`, `[Protocol
-Amendment]`, `[Hiring Signal]`, `[Vendor-Switch Signal]`; trial-signals
-search: `[Trial Milestone Approaching]`, `[Trial Recently Completed]`,
-`[New Phase 2 Filing (Returning Sponsor)]`, `[SEC Filing Signal]`, `[Press
-Release Signal]`; phase-transition search: `[Phase Transition (Deep
-Search)]` — each with the detail, a source link (or, for phase-transition
-leads that were corroborated by more than one source, every source
-listed), the verified contact (or an explicit "not confirmed" / "not
-publicly available" — it will never invent an email or a confidence
-score), and a draft outreach email. `[Trial Result]` leads always open
-with:
+conference search: `[Trial Result]`, `[Conference Highlight]`;
+trial-signals search: `[Trial Milestone Approaching]`, `[Trial Recently
+Completed]`, `[New Phase 2 Filing (Returning Sponsor)]`, `[Trial Site
+Expansion]`, `[SEC Filing Signal]`, `[Press Release Signal]`;
+phase-transition search: `[Phase Transition (Deep Search)]`; signal-sweep
+search: `[Funding]`, `[Leadership Change]`, `[New Trial Registration]`,
+`[Regulatory Designation]`, `[Regulatory Milestone]`, `[Trial Expansion]`,
+`[Protocol Amendment]`, `[Hiring Signal]`, `[Vendor-Switch Signal]` — each
+with the detail, a source link (or, for phase-transition leads that were
+corroborated by more than one source, every source listed), the verified
+contact (or an explicit "not confirmed" / "not publicly available" — it
+will never invent an email or a confidence score), and a draft outreach
+email. `[Trial Result]` leads always open with:
 
 > Dear [contact name], I read with interest your recent paper, "[abstract
 > title]" (Abstract #[abstract number]), at [meeting name] on [presentation
@@ -256,9 +288,9 @@ review the wording before relying on it.
 
 The script never sends anything — you review and send each draft yourself.
 
-Only the conference search and phase-transition search cost API usage
+The conference, phase-transition, and signal-sweep searches cost API usage
 (typically a few dollars each, since they do many web searches over an
-extended research task) — the trial-signals search is free. All three may
+extended research task) — the trial-signals search is free. All four may
 use Hunter.io (one lookup per lead — check your Hunter plan's monthly
 search limit). An approximate cost for a paid search just completed —
 based on its actual token and search usage, not a guess — prints at the
@@ -269,5 +301,5 @@ official bill; check console.anthropic.com for exact billing.
 
 - Point any search at other indications via the GUI or CLI flags.
 - Wire the output into HubSpot instead of a flat Markdown file.
-- Add a company-name-scoped lookup (today all three searches are
+- Add a company-name-scoped lookup (today all four searches are
   indication-scoped only).

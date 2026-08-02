@@ -78,7 +78,7 @@ class QueueWriter:
 
 
 def _outbox_fields(form: dict) -> dict:
-    """Shared outbox-drafts fields, read the same way by all three
+    """Shared outbox-drafts fields, read the same way by all four
     build_*_args() functions below — one shared set of GUI fields applies
     to whichever search is run, mirroring how sender_name/hunter_api_key
     etc. are already shared."""
@@ -198,10 +198,46 @@ def build_phase_transition_args(form: dict) -> argparse.Namespace:
     )
 
 
+def build_signal_sweep_args(form: dict) -> argparse.Namespace:
+    """Build the Namespace for the signal-sweep search (bd_agent.
+    run_signal_sweep_search()) from a plain dict of GUI form values. No
+    conference/year/phase fields — this covers the nine non-conference-
+    anchored signal types split out of the conference search (see
+    CLAUDE.md), run on its own regular cadence instead of the conference
+    search's irregular one.
+    `sweep_days` (not `days`) is the Namespace attribute name deliberately
+    — see bd_agent.build_arg_parser()'s --days/dest=sweep_days comment on
+    the signal-sweep subparser, so render_report() can tell this search's
+    Namespace apart from phase-transitions'."""
+    hunter_min_confidence = int(form.get("hunter_min_confidence", "").strip() or 90)
+    indication = form.get("indication", "").strip() or "bladder cancer"
+    sweep_days = int(form.get("signal_sweep_days", "").strip() or 30)
+
+    output_field = form.get("output", "").strip()
+    output = output_field or str(app_dir() / (bd_agent.default_signal_sweep_basename(indication) + ".md"))
+
+    return argparse.Namespace(
+        indication=indication,
+        sweep_days=sweep_days,
+        sender_name=form.get("sender_name", "").strip() or "[Your Name]",
+        sender_title=form.get("sender_title", "").strip() or "[Your Title]",
+        sender_company=form.get("sender_company", "").strip() or "Elevate Imaging",
+        output=output,
+        hunter_api_key=form.get("hunter_api_key", "").strip() or None,
+        hunter_min_confidence=hunter_min_confidence,
+        hunter_delay_ms=4000,
+        # Kept separate from the other three searches' seen-files/state —
+        # all four are independent searches over disjoint signal types.
+        seen_file=str(app_dir() / "signal_sweep_seen_leads.json"),
+        no_dedup=False,
+        **_outbox_fields(form),
+    )
+
+
 def _finalize_and_write(
     preamble: str, leads: list, excluded: list, args: argparse.Namespace, raw_response=None, known_leads=None
 ) -> Path:
-    """Shared dedup -> Hunter enrich -> render -> write tail for all three
+    """Shared dedup -> Hunter enrich -> render -> write tail for all four
     GUI pipelines below — mirrors bd_agent.py's `_finalize_and_write()` but
     returns the report path instead of just printing it (see gui.py/
     gui_logic.py's module-split rationale in CLAUDE.md). `known_leads` is
@@ -296,12 +332,32 @@ def run_phase_transition_pipeline(args: argparse.Namespace) -> Path:
     report path instead of just printing it. Runs the free trial-signals
     check first and passes its findings to the deep search as context, so
     Claude doesn't spend paid search budget rediscovering them — see
-    bd_agent._run_phase_transitions_cli()."""
+    bd_agent._run_phase_transitions_cli(). Also folds in the signal-sweep
+    search's own recent history (from its persisted seen-leads file, not a
+    fresh paid run), since two of its nine categories can describe the same
+    underlying event this search's Phase-1-to-Phase-2 signal covers."""
     args.no_ctgov = False
     args.no_secedgar = False
     args.no_prwire = False
     known_leads = bd_agent.run_trial_signals_search(args)
+    signal_sweep_leads = seen_leads.recent_entries(
+        app_dir() / "signal_sweep_seen_leads.json", within_days=args.days
+    )
 
-    raw_response = bd_agent.run_phase_transition_search(args, known_leads)
+    raw_response = bd_agent.run_phase_transition_search(args, known_leads, signal_sweep_leads)
     preamble, leads, excluded = bd_agent.parse_research_output(raw_response)
     return _finalize_and_write(preamble, leads, excluded, args, raw_response=raw_response, known_leads=known_leads)
+
+
+def run_signal_sweep_pipeline(args: argparse.Namespace) -> Path:
+    """Same steps as bd_agent._run_signal_sweep_cli(), but returns the
+    report path instead of just printing it. Folds in phase-transitions'
+    own recent history (from its persisted seen-leads file, not a fresh
+    paid run) for the same cross-search-awareness reason as above."""
+    known_leads = seen_leads.recent_entries(
+        app_dir() / "phase_transition_seen_leads.json", within_days=args.sweep_days
+    )
+
+    raw_response = bd_agent.run_signal_sweep_search(args, known_leads)
+    preamble, leads, excluded = bd_agent.parse_research_output(raw_response)
+    return _finalize_and_write(preamble, leads, excluded, args, raw_response=raw_response)

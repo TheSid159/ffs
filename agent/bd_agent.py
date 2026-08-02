@@ -2,16 +2,25 @@
 """
 Business development lead-finder for an imaging CRO.
 
-Two independent subcommands (see CLAUDE.md for why they're split):
+Four independent subcommands (see CLAUDE.md for why they're split):
 
-- "conferences": searches recent conference presentations for trials
-  matching a given phase, indication, and result criteria, using Claude
-  with web search across 11 signal types. Costs real API usage.
+- "conferences": Claude-driven web research, using web search, across the
+  two conference-anchored signal types (trial results, conference agenda/
+  highlight activity) at named conferences. Costs real API usage.
 - "trial-signals": free, deterministic checks against ClinicalTrials.gov,
   SEC EDGAR filings, and press-release RSS feeds — no LLM, no API cost, so
-  it can be run far more often than the conference search.
+  it can be run far more often than any of the three paid searches below.
+- "phase-transitions": a narrower, deeper Claude-driven web search focused
+  on just one signal (a Phase 1-to-Phase 2 transition), with full open-web
+  reach (LinkedIn, biotech news, blogs, hospital/university press). Costs
+  real API usage.
+- "signal-sweep": Claude-driven web research across the other nine BD
+  signal types (funding, leadership changes, new registrations, regulatory
+  designations/milestones, trial expansions, protocol amendments, hiring
+  signals, vendor-switch signals) — not tied to any conference, meant to
+  run on its own regular cadence. Costs real API usage.
 
-Either subcommand's structured lead data is then looked up for a verified
+Any subcommand's structured lead data is then looked up for a verified
 CEO/CMO contact via Hunter.io (gated on a minimum confidence score, so a
 low-confidence guess is never reported as confirmed) and rendered into a
 preliminary outreach email per lead from a fixed template.
@@ -113,11 +122,19 @@ def default_trial_signals_basename(indication: str) -> str:
 def default_phase_transition_basename(indication: str) -> str:
     """Default output filename (no extension) for a phase-transition deep
     search, e.g. "bladder_cancer_phase_transition_report" — kept separate
-    from the other two default-basename functions so all three independent
-    searches never share a default filename and overwrite each other's
-    report."""
+    from the other default-basename functions so all independent searches
+    never share a default filename and overwrite each other's report."""
     indication_part = _sanitize_filename_part(indication) or "leads"
     return f"{indication_part}_phase_transition_report"
+
+
+def default_signal_sweep_basename(indication: str) -> str:
+    """Default output filename (no extension) for a signal-sweep search,
+    e.g. "bladder_cancer_signal_sweep_report" — kept separate from the
+    other default-basename functions so all independent searches never
+    share a default filename and overwrite each other's report."""
+    indication_part = _sanitize_filename_part(indication) or "leads"
+    return f"{indication_part}_signal_sweep_report"
 
 
 def build_prompt(args: argparse.Namespace) -> str:
@@ -130,10 +147,16 @@ imaging services (central image review, endpoint assessment, imaging \
 biomarkers) to biotech and pharmaceutical sponsors running clinical trials.
 
 Task — using web search, find business-development leads in {args.indication} \
-across ELEVEN signal categories. A lead is any biotech/pharma company \
-activity that could be a reason to introduce {args.sender_company} as an \
-imaging vendor. Search for as many categories as your search budget allows; \
-note in your PART 1 summary if you had to skip or under-search any category.
+across TWO signal categories, both tied to the specific conference(s) named \
+below (nine other, non-conference-anchored signal categories — funding, \
+leadership changes, new trial registrations, regulatory designations/ \
+milestones, trial expansions, protocol amendments, hiring signals, and \
+vendor-switch signals — are covered by a separate, more regularly-run \
+"signal sweep" search, not this one; see CLAUDE.md for why they're split). \
+A lead is any biotech/pharma company activity that could be a reason to \
+introduce {args.sender_company} as an imaging vendor. Search for both \
+categories as thoroughly as your search budget allows; note in your PART 1 \
+summary if you had to skip or under-search either one.
 
 CATEGORY 1 — "trial_result": {args.phase} clinical trial results in \
 {args.indication} presented at the {conference_list} annual meeting(s) in \
@@ -173,107 +196,31 @@ regional meeting shortly ahead of a major congress. Only include one you \
 actually find evidence of — don't invent a plausible-sounding regional \
 meeting name.
 
-CATEGORY 3 — "funding": biotech or pharmaceutical companies working in \
-{args.indication} that have recently secured funding — Series B/C+ venture \
-rounds and IPOs are the strongest version of this signal, since imaging-heavy \
-oncology trials are expensive and this kind of raise often precedes an \
-imaging-vendor RFP by a few months, but also include grants and partnership/ \
-licensing deals with an upfront payment. Include the funding type/amount if \
-reported, and a URL to the announcement or press release.
-
-CATEGORY 4 — "leadership_change": companies working in {args.indication} \
-that recently appointed a new CEO, CMO, or CSO. This is directly useful for \
-BD outreach — a new executive is a natural reason to (re-)introduce \
-{args.sender_company}. Include the person's name, new title, and a URL to \
-the announcement.
-
-CATEGORY 5 — "new_registration": newly registered {args.phase} trials in \
-{args.indication} on ClinicalTrials.gov or an international equivalent \
-registry, even if no results exist yet — this surfaces sponsors before \
-their trial reaches a conference. Registries to check:
-{conferences.format_registry_list()}
-Include the registry name, the registry's trial ID (e.g. an NCT number), and \
-a direct URL to the registry entry.
-
-CATEGORY 6 — "regulatory_designation": FDA or EMA designations (Breakthrough \
-Therapy, Fast Track, Priority Review, Orphan Drug, EMA PRIME, etc.) recently \
-granted to a company's asset in {args.indication}. These often precede a \
-company finalizing a pivotal trial's design — including its imaging \
-endpoints — and selecting vendors for it. Include the designation type, the \
-asset/trial it applies to, and a URL to the announcement.
-
-CATEGORY 7 — "regulatory_milestone": End-of-Phase 2 meetings, Type B/C \
-meetings, or other major regulatory-agency interactions recently reported \
-for a company's {args.indication} program. These usually mean a pivotal \
-trial's design is being finalized around now. Include what was reported and \
-a URL.
-
-CATEGORY 8 — "trial_expansion": an existing {args.indication} trial that \
-recently expanded to new countries or added sites. Multi-region/multi-site \
-trials are where centralized, standardized imaging review becomes valuable \
-versus relying on inconsistent local site reads — this is a strong direct \
-signal. Include what expanded and a URL.
-
-CATEGORY 9 — "protocol_amendment": a protocol amendment to an existing \
-{args.indication} trial that adds or changes an imaging-related requirement \
-(e.g. adding an imaging endpoint, switching imaging assessment criteria, \
-adding central/blinded independent review). Check registry version/amendment \
-history where visible (e.g. ClinicalTrials.gov's "Study Record Versions" \
-tab), not just the current listing. This can mean a new imaging need has \
-emerged, or that a current imaging vendor isn't working out — a time-\
-sensitive signal, though don't speculate about a specific vendor by name. \
-Include what changed and a URL.
-
-CATEGORY 10 — "hiring_signal": a company in {args.indication} publicly \
-hiring for an imaging-specific clinical role (e.g. "Director of Imaging", \
-"Clinical Operations Lead, Imaging", "Imaging Biomarker Lead") — a fairly \
-strong tell that an imaging-heavy trial is coming, since this role usually \
-manages an imaging CRO relationship rather than replacing one. Include the \
-job title, company, and a URL to the posting.
-
-CATEGORY 11 — "vendor_switch_signal": a company in {args.indication} \
-publicly describing imaging data delays, quality-control issues, or \
-dissatisfaction with a current imaging vendor on one of their trials — in a \
-press release, LinkedIn post, or conference talk. This is a strong, direct \
-pain-point signal, but it is also the category most likely to not exist for \
-a given search, and the most sensitive: only include it if you find an \
-actual, citable public statement, never a rumor or inference, and never \
-name a specific competing vendor unless the source itself already does so \
-explicitly and publicly. If in doubt, leave it out rather than risk \
-repeating something unverified about a real company. Include what was said \
-and a URL to the source.
-
-For every lead in every category, also try to identify:
+For every lead in either category, also try to identify:
    - The sponsoring biotech or pharmaceutical company, and its primary \
 website domain (e.g. "protaratx.com" — no "https://" or "www.")
    - The name and title of the company's CEO or CMO, ONLY if you happen to \
 encounter it naturally while researching (e.g. named in a press release, or \
-as a quoted spokesperson — for a "leadership_change" lead this is usually \
-the lead itself). Do not spend extra search effort specifically hunting for \
-this — a dedicated, verified contact lookup happens separately after your \
-research, so this field is a bonus, not a requirement.
+as a quoted spokesperson). Do not spend extra search effort specifically \
+hunting for this — a dedicated, verified contact lookup happens separately \
+after your research, so this field is a bonus, not a requirement.
 
-Two more things worth actively noting, folded into the existing \
-result_summary/signal_detail text rather than as separate fields — both are \
-strong, specific signals of imaging-CRO fit, stronger than the category \
-alone:
-   - For "trial_result" and "new_registration" leads: if the trial's \
-endpoint explicitly uses a standardized imaging assessment criterion (e.g. \
-RECIST 1.1, iRECIST, PCWG3, Lugano), say so — these criteria typically \
-require central/blinded independent imaging review. Also note if this \
-appears to be the company's first pivotal/registrational trial (as opposed \
-to an earlier-phase trial) — companies often only engage an external \
-imaging vendor once a trial has to hold up to regulators.
-   - For "funding" leads: note if the proceeds are specifically said to \
-fund a pivotal/registrational trial, not just general runway.
+One more thing worth actively noting, folded into the existing \
+result_summary/signal_detail text rather than as a separate field — a \
+strong, specific signal of imaging-CRO fit, stronger than the category \
+alone: for "trial_result" leads, if the trial's endpoint explicitly uses a \
+standardized imaging assessment criterion (e.g. RECIST 1.1, iRECIST, PCWG3, \
+Lugano), say so — these criteria typically require central/blinded \
+independent imaging review. Also note if this appears to be the company's \
+first pivotal/registrational trial (as opposed to an earlier-phase trial) — \
+companies often only engage an external imaging vendor once a trial has to \
+hold up to regulators.
 
 Also list any items you reviewed but excluded, and why (e.g. result was not \
-clearly positive, no commercial sponsor, wrong indication or phase, funding \
-round too old/stale to be a timely lead).
+clearly positive, no commercial sponsor, wrong indication or phase).
 
-Do not fabricate anything — results, names, dates, funding amounts, \
-registry IDs, or URLs, in any category. Omit a field (use null) rather than \
-guess it.
+Do not fabricate anything — results, names, dates, or URLs, in either \
+category. Omit a field (use null) rather than guess it.
 
 Output format — TWO parts, in this exact order:
 
@@ -289,7 +236,7 @@ this exact shape and nothing else inside the fence:
 {{
   "leads": [
     {{
-      "signal_type": "trial_result" | "conference_highlight" | "funding" | "leadership_change" | "new_registration" | "regulatory_designation" | "regulatory_milestone" | "trial_expansion" | "protocol_amendment" | "hiring_signal" | "vendor_switch_signal",
+      "signal_type": "trial_result" | "conference_highlight",
       "company_name": "...",
       "company_domain": "..." or null,
       "trial_name": "..." or null,
@@ -302,8 +249,6 @@ this exact shape and nothing else inside the fence:
       "abstract_url": "..." or null,
       "abstract_url_note": "..." or null,
       "signal_detail": "..." or null,
-      "registry_name": "..." or null,
-      "registry_id": "..." or null,
       "contact_name": "..." or null,
       "contact_title": "..." or null
     }}
@@ -314,34 +259,32 @@ this exact shape and nothing else inside the fence:
 }}
 
 Notes on fields shared across categories: "abstract_url"/"abstract_url_note" \
-double as the general "source URL" field for every category (press release, \
-registry entry, or agenda page — not literally always an abstract). \
-"abstract_title" doubles as a general headline field. "signal_detail" is a \
-one- to two-sentence plain-English description of the signal, required for \
-every category except "trial_result" (which uses "result_summary" instead; \
-"signal_detail" can be null there). "registry_name"/"registry_id" are only \
-for "new_registration" leads.
+double as the general "source URL" field for either category (press release \
+or agenda page — not literally always an abstract). "abstract_title" \
+doubles as a general headline field. "signal_detail" is a one- to \
+two-sentence plain-English description of the signal, required for \
+"conference_highlight" ("trial_result" uses "result_summary" instead; \
+"signal_detail" can be null there).
 
 If you cannot find any qualifying leads in a category, leave it out of the \
 "leads" array and explain why in PART 1 rather than inventing results.
 """
 
 
-def _format_known_leads_for_prompt(known_leads: list) -> str:
-    """Render the free trial-signals search's findings as a short bulleted
-    block to inject into the phase-transition prompt, so Claude knows what's
-    already been found before it starts searching. See
-    build_phase_transition_prompt() for how this is used."""
+def _format_known_leads_for_prompt(
+    known_leads: list,
+    source_label: str = "The free automated check (ClinicalTrials.gov, SEC EDGAR, press-release RSS)",
+) -> str:
+    """Render another search's already-found leads as a short bulleted
+    block to inject into a research prompt, so Claude doesn't spend budget
+    rediscovering them. `source_label` names where these leads came from —
+    used both by build_phase_transition_prompt() (the free trial-signals
+    pre-check) and build_signal_sweep_prompt() (phase-transitions' own
+    recent history, the closest thing available to a pre-check when both
+    sides are paid Claude searches — see that function's docstring)."""
     if not known_leads:
-        return (
-            "The free automated check (ClinicalTrials.gov, SEC EDGAR, press-release RSS) "
-            "found nothing this run — search freely, nothing to avoid duplicating."
-        )
-    lines = [
-        "The free automated check (ClinicalTrials.gov, SEC EDGAR, press-release RSS) "
-        "already found the following before you started searching:",
-        "",
-    ]
+        return f"{source_label} found nothing this run — search freely, nothing to avoid duplicating."
+    lines = [f"{source_label} already found the following before you started searching:", ""]
     for lead in known_leads:
         company = lead.get("company_name") or "Unknown company"
         detail = lead.get("signal_detail") or ""
@@ -349,9 +292,13 @@ def _format_known_leads_for_prompt(known_leads: list) -> str:
     return "\n".join(lines)
 
 
-def build_phase_transition_prompt(args: argparse.Namespace, known_leads: Optional[list] = None) -> str:
+def build_phase_transition_prompt(
+    args: argparse.Namespace,
+    known_leads: Optional[list] = None,
+    signal_sweep_leads: Optional[list] = None,
+) -> str:
     """The phase-transition deep-search prompt — deliberately narrower in
-    scope than build_prompt() (one signal, not eleven) but much broader in
+    scope than build_prompt() (one signal, not two) but much broader in
     source reach: it explicitly encourages LinkedIn, biotech news sites,
     company blogs, and hospital/university press, not just named
     conferences or the trial-signals search's three fixed APIs
@@ -362,9 +309,20 @@ def build_phase_transition_prompt(args: argparse.Namespace, known_leads: Optiona
     `known_leads` (from run_trial_signals_search(), run for free right
     before this) is injected so Claude doesn't spend paid search budget
     rediscovering what the free check already found — see
-    _format_known_leads_for_prompt().
+    _format_known_leads_for_prompt(). `signal_sweep_leads` is the
+    signal-sweep search's own recent history (read from its seen-leads
+    file, not a fresh paid run — see _run_phase_transitions_cli()): two of
+    its nine categories (new_registration, regulatory_milestone) can
+    describe the same underlying event this search's Phase-1-to-Phase-2
+    signal covers, so it gets its own, separate known-leads block.
     """
     known_leads_block = _format_known_leads_for_prompt(known_leads or [])
+    signal_sweep_block = _format_known_leads_for_prompt(
+        signal_sweep_leads or [],
+        source_label="The signal-sweep search's own recent history (a separate, previously-run "
+        "search covering funding, leadership changes, new registrations, regulatory milestones, "
+        "and other non-conference-anchored BD signals)",
+    )
 
     return f"""\
 You are a business development research assistant for an imaging Contract \
@@ -387,16 +345,17 @@ list of domains. Search as broadly as your budget allows.
 
 {known_leads_block}
 
+{signal_sweep_block}
+
 Do NOT spend search budget re-confirming or re-reporting any of the leads \
-listed above — treat them as already covered. Only include one of them in \
-your own "leads" output if you find something genuinely new and valuable \
-about it that the free check couldn't have (e.g. an additional \
-corroborating source, a materially fuller narrative, or a specific \
-contact) — and if you do, say so explicitly in "signal_detail" (e.g. \
-"Also independently found by the automated ClinicalTrials.gov/SEC EDGAR/ \
-press-release check; adding here because..."). Otherwise, focus your \
-search entirely on finding companies/signals those three fixed sources \
-missed.
+listed above (from either source) — treat them as already covered. Only \
+include one of them in your own "leads" output if you find something \
+genuinely new and valuable about it that the source couldn't have (e.g. an \
+additional corroborating source, a materially fuller narrative, or a \
+specific contact) — and if you do, say so explicitly in "signal_detail" \
+(e.g. "Also independently found by the automated ClinicalTrials.gov/SEC \
+EDGAR/press-release check; adding here because..."). Otherwise, focus your \
+search entirely on finding companies/signals those sources missed.
 
 For every company/trial you find:
 
@@ -452,6 +411,191 @@ exactly one fenced ```json code block with this exact shape:
   ]
 }}
 ```
+"""
+
+
+def build_signal_sweep_prompt(args: argparse.Namespace, known_leads: Optional[list] = None) -> str:
+    """The signal-sweep prompt — the nine BD signal types split out of
+    build_prompt() (see CLAUDE.md for the full split rationale): unlike
+    trial_result/conference_highlight, none of these nine are tied to a
+    named conference's timing, so batching them into the conference
+    search's own irregular, conference-driven cadence under-checked them.
+    This search runs on its own schedule (meant to be more regular — e.g.
+    weekly — than the conference search), independent of when any
+    conference happens to fall, which is why it takes its own `--days`
+    look-back window rather than the conference search's `--year` scoping.
+
+    `known_leads` is phase-transitions' own recently-seen leads (read from
+    its seen-leads file by _run_signal_sweep_cli(), not a fresh paid run)
+    — injected because two of the nine categories here (new_registration,
+    regulatory_milestone) can describe the same underlying event
+    phase-transitions' Phase-1-to-Phase-2 signal already covers, and unlike
+    the free trial-signals pre-check, there's no zero-cost way to check one
+    paid Claude search against another before running it.
+    """
+    known_leads_block = _format_known_leads_for_prompt(
+        known_leads or [],
+        source_label="The phase-transitions search's own recent history (a separate, previously-run "
+        "search for Phase 1-to-Phase 2 transition signals)",
+    )
+
+    return f"""\
+You are a business development research assistant for an imaging Contract \
+Research Organization (CRO) called "{args.sender_company}". The CRO provides \
+imaging services (central image review, endpoint assessment, imaging \
+biomarkers) to biotech and pharmaceutical sponsors running clinical trials.
+
+Task — using web search, find business-development leads in {args.indication} \
+from the last {args.sweep_days} days, across NINE signal categories. None of \
+these are tied to a specific conference or named meeting — this is a \
+general, open-web sweep meant to run on a regular cadence (e.g. weekly), \
+independent of conference timing (a separate search covers the two \
+conference-anchored signal types — trial results and conference agenda/ \
+highlight activity — on its own, conference-driven schedule). A lead is any \
+biotech/pharma company activity that could be a reason to introduce \
+{args.sender_company} as an imaging vendor. Search for as many categories as \
+your search budget allows; note in your PART 1 summary if you had to skip or \
+under-search any category.
+
+{known_leads_block}
+
+Do NOT spend search budget re-confirming or re-reporting any of the leads \
+listed above — treat them as already covered. Only include one of them in \
+your own "leads" output if you find something genuinely new and valuable \
+about it (e.g. an additional corroborating source, a materially fuller \
+narrative, or a specific contact) — and if you do, say so explicitly in \
+"signal_detail" (e.g. "Also independently found by the phase-transitions \
+search; adding here because...").
+
+CATEGORY 1 — "funding": biotech or pharmaceutical companies working in \
+{args.indication} that have recently secured funding — Series B/C+ venture \
+rounds and IPOs are the strongest version of this signal, since imaging-heavy \
+oncology trials are expensive and this kind of raise often precedes an \
+imaging-vendor RFP by a few months, but also include grants and partnership/ \
+licensing deals with an upfront payment. Include the funding type/amount if \
+reported, and a URL to the announcement or press release. Also note in \
+signal_detail if the proceeds are specifically said to fund a pivotal/ \
+registrational trial, not just general runway.
+
+CATEGORY 2 — "leadership_change": companies working in {args.indication} \
+that recently appointed a new CEO, CMO, or CSO. This is directly useful for \
+BD outreach — a new executive is a natural reason to (re-)introduce \
+{args.sender_company}. Include the person's name, new title, and a URL to \
+the announcement.
+
+CATEGORY 3 — "new_registration": newly registered trials in \
+{args.indication} on ClinicalTrials.gov or an international equivalent \
+registry, even if no results exist yet — this surfaces sponsors before \
+their trial reaches a conference. Registries to check:
+{conferences.format_registry_list()}
+Include the registry name, the registry's trial ID (e.g. an NCT number), and \
+a direct URL to the registry entry. Also note in signal_detail if the \
+trial's endpoint explicitly uses a standardized imaging assessment criterion \
+(e.g. RECIST 1.1, iRECIST, PCWG3, Lugano) — these typically require central/ \
+blinded independent imaging review — and whether this appears to be the \
+company's first pivotal/registrational trial.
+
+CATEGORY 4 — "regulatory_designation": FDA or EMA designations (Breakthrough \
+Therapy, Fast Track, Priority Review, Orphan Drug, EMA PRIME, etc.) recently \
+granted to a company's asset in {args.indication}. These often precede a \
+company finalizing a pivotal trial's design — including its imaging \
+endpoints — and selecting vendors for it. Include the designation type, the \
+asset/trial it applies to, and a URL to the announcement.
+
+CATEGORY 5 — "regulatory_milestone": End-of-Phase 2 meetings, Type B/C \
+meetings, or other major regulatory-agency interactions recently reported \
+for a company's {args.indication} program. These usually mean a pivotal \
+trial's design is being finalized around now. Include what was reported and \
+a URL.
+
+CATEGORY 6 — "trial_expansion": an existing {args.indication} trial that \
+recently expanded to new countries or added sites. Multi-region/multi-site \
+trials are where centralized, standardized imaging review becomes valuable \
+versus relying on inconsistent local site reads — this is a strong direct \
+signal. Include what expanded and a URL.
+
+CATEGORY 7 — "protocol_amendment": a protocol amendment to an existing \
+{args.indication} trial that adds or changes an imaging-related requirement \
+(e.g. adding an imaging endpoint, switching imaging assessment criteria, \
+adding central/blinded independent review). Check registry version/amendment \
+history where visible (e.g. ClinicalTrials.gov's "Study Record Versions" \
+tab), not just the current listing. This can mean a new imaging need has \
+emerged, or that a current imaging vendor isn't working out — a time-\
+sensitive signal, though don't speculate about a specific vendor by name. \
+Include what changed and a URL.
+
+CATEGORY 8 — "hiring_signal": a company in {args.indication} publicly \
+hiring for an imaging-specific clinical role (e.g. "Director of Imaging", \
+"Clinical Operations Lead, Imaging", "Imaging Biomarker Lead") — a fairly \
+strong tell that an imaging-heavy trial is coming, since this role usually \
+manages an imaging CRO relationship rather than replacing one. Include the \
+job title, company, and a URL to the posting.
+
+CATEGORY 9 — "vendor_switch_signal": a company in {args.indication} \
+publicly describing imaging data delays, quality-control issues, or \
+dissatisfaction with a current imaging vendor on one of their trials — in a \
+press release, LinkedIn post, or conference talk. This is a strong, direct \
+pain-point signal, but it is also the category most likely to not exist for \
+a given search, and the most sensitive: only include it if you find an \
+actual, citable public statement, never a rumor or inference, and never \
+name a specific competing vendor unless the source itself already does so \
+explicitly and publicly. If in doubt, leave it out rather than risk \
+repeating something unverified about a real company. Include what was said \
+and a URL to the source.
+
+For every lead in every category, also try to identify:
+   - The sponsoring biotech or pharmaceutical company, and its primary \
+website domain (e.g. "protaratx.com" — no "https://" or "www.")
+   - The name and title of the company's CEO or CMO, ONLY if you happen to \
+encounter it naturally while researching (e.g. named in a press release, or \
+as a quoted spokesperson — for a "leadership_change" lead this is usually \
+the lead itself). Do not spend extra search effort specifically hunting for \
+this — a dedicated, verified contact lookup happens separately after your \
+research, so this field is a bonus, not a requirement.
+
+Also list any items you reviewed but excluded, and why (e.g. no commercial \
+sponsor, wrong indication, or too old/stale to be a timely lead).
+
+Do not fabricate anything — names, dates, funding amounts, registry IDs, or \
+URLs, in any category. Omit a field (use null) rather than guess it.
+
+Return a short prose summary of your search (what you searched, which \
+categories you covered, and any caveats), followed by exactly one fenced \
+```json code block with this exact shape:
+
+```json
+{{
+  "leads": [
+    {{
+      "signal_type": "funding" | "leadership_change" | "new_registration" | "regulatory_designation" | "regulatory_milestone" | "trial_expansion" | "protocol_amendment" | "hiring_signal" | "vendor_switch_signal",
+      "company_name": "...",
+      "company_domain": "..." or null,
+      "trial_name": "..." or null,
+      "drug_asset_name": "..." or null,
+      "abstract_title": "..." or null,
+      "abstract_url": "..." or null,
+      "abstract_url_note": "..." or null,
+      "signal_detail": "...",
+      "registry_name": "..." or null,
+      "registry_id": "..." or null,
+      "contact_name": "..." or null,
+      "contact_title": "..." or null
+    }}
+  ],
+  "excluded": [
+    {{"company_name": "...", "reason": "..."}}
+  ]
+}}
+```
+
+Notes on fields: "abstract_url"/"abstract_url_note" double as the general \
+"source URL" field (press release, registry entry, agenda page). \
+"abstract_title" doubles as a general headline field. "signal_detail" is \
+required for every category here. "registry_name"/"registry_id" are only \
+for "new_registration" leads.
+
+If you cannot find any qualifying leads in a category, leave it out of the \
+"leads" array and explain why in PART 1 rather than inventing results.
 """
 
 
@@ -528,14 +672,21 @@ def _stream_claude_research(prompt: str, max_uses: int, progress_message: str) -
 
 def run_research(args: argparse.Namespace) -> str:
     """Send the conference-search research prompt to Claude and return the
-    full streamed response."""
+    full streamed response. max_uses=40 — down from an earlier 90 now that
+    build_prompt() covers only the two conference-anchored categories
+    (trial_result, conference_highlight); the other nine moved to
+    run_signal_sweep_search() below, each with its own budget."""
     prompt = build_prompt(args)
     return _stream_claude_research(
-        prompt, max_uses=90, progress_message="Researching trials (this can take a few minutes)..."
+        prompt, max_uses=40, progress_message="Researching trials (this can take a few minutes)..."
     )
 
 
-def run_phase_transition_search(args: argparse.Namespace, known_leads: Optional[list] = None) -> str:
+def run_phase_transition_search(
+    args: argparse.Namespace,
+    known_leads: Optional[list] = None,
+    signal_sweep_leads: Optional[list] = None,
+) -> str:
     """Send the phase-transition deep-search prompt to Claude and return the
     full streamed response. See build_phase_transition_prompt() for what
     makes this different from run_research(): one narrow signal, but full
@@ -544,13 +695,33 @@ def run_phase_transition_search(args: argparse.Namespace, known_leads: Optional[
     list), with Claude itself responsible for cross-source dedup and
     drafting a synthesized email opening per lead. `known_leads` are the
     free trial-signals search's findings (run first — see
-    _run_phase_transitions_cli()), passed through so Claude doesn't spend
-    budget rediscovering them."""
-    prompt = build_phase_transition_prompt(args, known_leads)
+    _run_phase_transitions_cli()); `signal_sweep_leads` is the signal-sweep
+    search's own recent history — both passed through so Claude doesn't
+    spend budget rediscovering them."""
+    prompt = build_phase_transition_prompt(args, known_leads, signal_sweep_leads)
     return _stream_claude_research(
         prompt,
         max_uses=60,
         progress_message="Searching broadly for Phase 1-to-Phase 2 transition signals (this can take a few minutes)...",
+    )
+
+
+def run_signal_sweep_search(args: argparse.Namespace, known_leads: Optional[list] = None) -> str:
+    """Send the signal-sweep research prompt to Claude and return the full
+    streamed response. See build_signal_sweep_prompt() for what these nine
+    signal types are and why they're a separate search from the conference
+    search (CLAUDE.md has the full split rationale). max_uses=70 — between
+    the conference search's 40 (two categories, but grounded against a
+    curated conference list, so less blind searching) and phase-transitions'
+    60 (one category, but full cross-source narrative synthesis): nine
+    categories need real budget of their own, even though none needs
+    phase-transitions' depth-per-lead."""
+    prompt = build_signal_sweep_prompt(args, known_leads)
+    return _stream_claude_research(
+        prompt,
+        max_uses=70,
+        progress_message="Sweeping the open web for funding, leadership, regulatory, and other BD signals "
+        "(this can take a few minutes)...",
     )
 
 
@@ -668,6 +839,7 @@ SIGNAL_LABELS = {
     "trial_milestone_approaching": "Trial Milestone Approaching",
     "trial_recently_completed": "Trial Recently Completed",
     "phase2_filing_by_returning_sponsor": "New Phase 2 Filing (Returning Sponsor)",
+    "trial_site_expansion": "Trial Site Expansion",
     "sec_filing_signal": "SEC Filing Signal",
     "press_release_signal": "Press Release Signal",
     "phase_transition_deep_signal": "Phase Transition (Deep Search)",
@@ -849,18 +1021,21 @@ def render_report(
     repeat_leads: Optional[list] = None,
     known_leads: Optional[list] = None,
 ) -> str:
-    # render_report() is shared by all three searches (conference, trial-signals,
-    # phase-transitions — see CLAUDE.md), which are separate, independently-run
-    # pipelines, so their args.Namespaces differ: only the conference search's
-    # has .conference/.year/.phase; only the phase-transitions search's has .days.
+    # render_report() is shared by all four searches (conference, trial-signals,
+    # phase-transitions, signal-sweep — see CLAUDE.md), which are separate,
+    # independently-run pipelines, so their args.Namespaces differ: only the
+    # conference search's has .conference/.year/.phase; only the
+    # phase-transitions search's has .days; only the signal-sweep search's
+    # has .sweep_days (deliberately a different attribute name than
+    # phase-transitions' .days, even though both are CLI-exposed as --days,
+    # so these two branches can't collide with each other).
     if hasattr(args, "conference"):
         conference_list = " and ".join(args.conference)
         years = ", ".join(str(y) for y in args.year)
         scope_line = (
-            f"**Scope searched:** {conference_list} ({years}), {args.phase} — trial results, "
-            f"conference highlights, funding, leadership changes, new trial registrations, "
-            f"regulatory designations/milestones, trial expansions, protocol amendments, "
-            f"hiring signals, and vendor-switch signals."
+            f"**Scope searched:** {conference_list} ({years}), {args.phase} — trial results and "
+            f"conference agenda/keynote/highlight activity (the other nine BD signal types are "
+            f"covered by the separate signal-sweep search)."
         )
     elif hasattr(args, "days"):
         scope_line = (
@@ -869,12 +1044,19 @@ def render_report(
             f"in the last {args.days} days — Claude-driven, costs API usage, broader source reach "
             f"than the trial-signals search below/above."
         )
+    elif hasattr(args, "sweep_days"):
+        scope_line = (
+            f"**Scope searched:** open web search in the last {args.sweep_days} days for funding, "
+            f"leadership changes, new trial registrations, regulatory designations/milestones, "
+            f"trial expansions, protocol amendments, hiring signals, and vendor-switch signals — "
+            f"Claude-driven, costs API usage, not tied to any specific conference or meeting."
+        )
     else:
         scope_line = (
             "**Scope searched:** ClinicalTrials.gov (trial milestones approaching, recently "
-            "completed trials, new Phase 2 filings by returning sponsors), SEC EDGAR (8-K/10-Q "
-            "filings), and press-release RSS feeds — no LLM research involved, free and "
-            "deterministic, and independent of the conference search above."
+            "completed trials, new Phase 2 filings by returning sponsors, trial site expansions), "
+            "SEC EDGAR (8-K/10-Q filings), and press-release RSS feeds — no LLM research involved, "
+            "free and deterministic, and independent of the other searches."
         )
 
     lines = [
@@ -1108,17 +1290,25 @@ def render_csv(enriched_leads: list, args: argparse.Namespace) -> str:
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    """Three independent subcommands (see CLAUDE.md): "conferences" is the
-    original Claude-driven web research across 11 signal types (costs real
-    API usage); "trial-signals" is the free, deterministic ClinicalTrials.gov/
-    SEC EDGAR/press-release-RSS check (no LLM, no API cost); "phase-transitions"
-    is a narrower Claude-driven deep web search focused only on Phase
-    1-to-Phase 2 transition signals, with much broader source reach than
-    trial-signals' three fixed sources (LinkedIn, biotech news, blogs,
-    hospital/university press) — also costs API usage. Kept as three
-    separate subcommands so the two free-vs-paid boundaries stay clear and
-    the free one can be run far more often without touching either paid
-    budget.
+    """Four independent subcommands (see CLAUDE.md): "conferences" is
+    Claude-driven web research across the two conference-anchored signal
+    types (trial results, conference highlights — costs real API usage,
+    meant to run whenever a relevant conference is coming up);
+    "trial-signals" is the free, deterministic ClinicalTrials.gov/SEC
+    EDGAR/press-release-RSS check (no LLM, no API cost, safe to run daily
+    or hourly); "phase-transitions" is a narrower Claude-driven deep web
+    search focused only on Phase 1-to-Phase 2 transition signals, with much
+    broader source reach than trial-signals' three fixed sources (LinkedIn,
+    biotech news, blogs, hospital/university press) — also costs API
+    usage; "signal-sweep" is Claude-driven web research across the other
+    nine BD signal types (funding, leadership changes, new registrations,
+    regulatory designations/milestones, trial expansions, protocol
+    amendments, hiring signals, vendor-switch signals) — not tied to any
+    conference, meant to run on its own regular cadence (e.g. weekly) —
+    also costs API usage. Kept as four separate subcommands so the
+    free-vs-paid boundary and each search's own cadence/cost story stay
+    clear, and the free one can be run far more often without touching any
+    paid budget.
     """
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1191,7 +1381,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     conf_parser = subparsers.add_parser(
         "conferences",
         parents=[common],
-        help="Claude-driven web research across 11 signal types at named conferences (costs API usage).",
+        help="Claude-driven web research across the two conference-anchored signal types (trial "
+        "results, conference highlights) at named conferences — costs API usage. The other nine BD "
+        "signal types are covered by signal-sweep.",
     )
     conf_parser.add_argument("--conference", nargs="+", default=["ASH", "ASCO"], help="Conference(s) to search (default: ASH ASCO)")
     conf_parser.add_argument("--year", nargs="+", type=int, default=[2025, 2026], help="Year(s) to search (default: 2025 2026)")
@@ -1274,6 +1466,30 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "default as trial-signals, for the same free-pre-check reason as --sponsor-history-file).",
     )
 
+    sweep_parser = subparsers.add_parser(
+        "signal-sweep",
+        parents=[common],
+        help="Claude-driven web research across the nine non-conference-anchored signal types "
+        "(funding, leadership changes, new registrations, regulatory designations/milestones, "
+        "trial expansions, protocol amendments, hiring signals, vendor-switch signals) — costs API "
+        "usage, meant to run on a regular cadence (e.g. weekly) independent of conference timing.",
+    )
+    sweep_parser.add_argument(
+        "--days",
+        dest="sweep_days",
+        type=int,
+        default=30,
+        help="How many days back to search (default: 30 — enough buffer for a weekly-run search "
+        "without resurfacing stale news indefinitely). Stored as args.sweep_days, not args.days, so "
+        "render_report() can't confuse this search's Namespace with phase-transitions'.",
+    )
+    sweep_parser.add_argument(
+        "--seen-file",
+        default="signal_sweep_seen_leads.json",
+        help="Path to the local dedup file (default: signal_sweep_seen_leads.json — kept separate "
+        "from the other searches' seen-files since these are independent searches).",
+    )
+
     return parser
 
 
@@ -1285,12 +1501,12 @@ def _finalize_and_write(
     raw_response: Optional[str] = None,
     known_leads: Optional[list] = None,
 ) -> None:
-    """Shared dedup -> Hunter enrich -> render -> write tail for all three
+    """Shared dedup -> Hunter enrich -> render -> write tail for all four
     CLI subcommands — only the research step before this differs between
-    them. `raw_response` is only ever set by the conference/phase-transition
-    searches (the fallback text written if Claude's response couldn't be
-    parsed as structured leads); the trial-signals search has no such raw
-    text to fall back to. `known_leads` is only ever set by the
+    them. `raw_response` is only ever set by the conference/phase-transition/
+    signal-sweep searches (the fallback text written if Claude's response
+    couldn't be parsed as structured leads); the trial-signals search has no
+    such raw text to fall back to. `known_leads` is only ever set by the
     phase-transition search — the free trial-signals findings it was given
     as context (see _run_phase_transitions_cli()) — shown in the report for
     transparency even when Claude's own leads list is empty.
@@ -1409,9 +1625,31 @@ def _run_phase_transitions_cli(args: argparse.Namespace) -> None:
     args.no_prwire = False
     known_leads = run_trial_signals_search(args)
 
-    raw_response = run_phase_transition_search(args, known_leads)
+    # Also fold in the signal-sweep search's own recent history (read from
+    # its persisted seen-leads file, not a fresh paid run — unlike
+    # trial-signals, there's no free way to re-check a paid Claude search).
+    # Two of signal-sweep's nine categories can describe the same
+    # underlying event as this search's Phase-1-to-Phase-2 signal.
+    signal_sweep_leads = seen_leads.recent_entries(Path("signal_sweep_seen_leads.json"), within_days=args.days)
+
+    raw_response = run_phase_transition_search(args, known_leads, signal_sweep_leads)
     preamble, leads, excluded = parse_research_output(raw_response)
     _finalize_and_write(preamble, leads, excluded, args, raw_response=raw_response, known_leads=known_leads)
+
+
+def _run_signal_sweep_cli(args: argparse.Namespace) -> None:
+    if not args.output:
+        args.output = default_signal_sweep_basename(args.indication) + ".md"
+
+    # Fold in phase-transitions' own recent history (read from its
+    # persisted seen-leads file, not a fresh paid run — see
+    # build_signal_sweep_prompt() for why this search can't get the free
+    # pre-check trial-signals gives phase-transitions).
+    known_leads = seen_leads.recent_entries(Path("phase_transition_seen_leads.json"), within_days=args.sweep_days)
+
+    raw_response = run_signal_sweep_search(args, known_leads)
+    preamble, leads, excluded = parse_research_output(raw_response)
+    _finalize_and_write(preamble, leads, excluded, args, raw_response=raw_response)
 
 
 def validate_outbox_args(args: argparse.Namespace) -> Optional[str]:
@@ -1447,8 +1685,10 @@ def main() -> None:
         _run_conferences_cli(args)
     elif args.command == "trial-signals":
         _run_trial_signals_cli(args)
-    else:
+    elif args.command == "phase-transitions":
         _run_phase_transitions_cli(args)
+    else:
+        _run_signal_sweep_cli(args)
 
 
 if __name__ == "__main__":
