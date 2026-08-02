@@ -109,6 +109,16 @@ def default_trial_signals_basename(indication: str) -> str:
     return f"{indication_part}_trial_signals_report"
 
 
+def default_phase_transition_basename(indication: str) -> str:
+    """Default output filename (no extension) for a phase-transition deep
+    search, e.g. "bladder_cancer_phase_transition_report" — kept separate
+    from the other two default-basename functions so all three independent
+    searches never share a default filename and overwrite each other's
+    report."""
+    indication_part = _sanitize_filename_part(indication) or "leads"
+    return f"{indication_part}_phase_transition_report"
+
+
 def build_prompt(args: argparse.Namespace) -> str:
     conference_list = " and ".join(args.conference)
     years = ", ".join(str(y) for y in args.year)
@@ -316,13 +326,102 @@ If you cannot find any qualifying leads in a category, leave it out of the \
 """
 
 
-def run_research(args: argparse.Namespace) -> str:
-    """Send the research prompt to Claude and return the full streamed response."""
-    client = anthropic.Anthropic()
-    prompt = build_prompt(args)
+def build_phase_transition_prompt(args: argparse.Namespace) -> str:
+    """The phase-transition deep-search prompt — deliberately narrower in
+    scope than build_prompt() (one signal, not eleven) but much broader in
+    source reach: it explicitly encourages LinkedIn, biotech news sites,
+    company blogs, and hospital/university press, not just named
+    conferences or the trial-signals search's three fixed APIs
+    (ClinicalTrials.gov/SEC EDGAR/press-release RSS). See CLAUDE.md for why
+    this is a third, separate, paid search rather than folded into either
+    existing one.
+    """
+    return f"""\
+You are a business development research assistant for an imaging Contract \
+Research Organization (CRO) called "{args.sender_company}". The CRO provides \
+imaging services (central image review, endpoint assessment, imaging \
+biomarkers) to biotech and pharmaceutical sponsors running clinical trials.
 
+Task — using web search, find companies in {args.indication} that are \
+transitioning, or have very recently transitioned, from a Phase 1 to a \
+Phase 2 trial, within roughly the last {args.days} days. A separate, \
+free, automated process already checks three fixed sources for this same \
+signal (ClinicalTrials.gov, SEC EDGAR 8-K/10-Q filings, and a handful of \
+press-release RSS feeds) — your job here is to go further and deeper than \
+those fixed sources can: search LinkedIn (company pages, executive posts), \
+biotech/pharma news sites (e.g. Endpoints News, Fierce Biotech, BioPharma \
+Dive, STAT News), company blogs and press pages, hospital/university press \
+releases, investor-update pages, and conference-presentation summaries — \
+not limited to a fixed list of domains. Search as broadly as your budget \
+allows.
+
+For every company/trial you find:
+
+1. Before writing it up, actively search for every source you can find \
+describing it — don't stop at the first hit.
+2. If multiple sources describe the SAME underlying event (for example, an \
+SEC 8-K filing and a press release both announcing the same Phase 2 \
+initiation, or a LinkedIn post repeating a news article), report it as ONE \
+lead, not multiple — list every corroborating source URL you found for it \
+in "source_urls", and synthesize the "signal_detail" and "email_opening" \
+fields from all of them together. Never report the same underlying event \
+as two separate leads just because you found it via two different sources.
+3. Write "email_opening" as a 2-4 sentence paragraph that could open a cold \
+outreach email, referencing the specific, real, verifiable facts you found \
+(e.g. "I saw that Acme Biotech recently announced initiation of its Phase 2 \
+trial for [asset], following positive Phase 1 results presented at [event]. \
+Congratulations on this milestone."). This must be grounded only in facts \
+you actually found in a real source — never invent a quote, a date, a \
+number, or a detail that isn't present in something you found via search.
+
+Anti-fabrication rules (same discipline as always): never invent a contact \
+name, email address, date, or fact. If you can't verify something, leave \
+the field null or say so in "signal_detail" rather than guessing. Only \
+include a lead if you found at least one real, citable source for it — if \
+you searched and found nothing qualifying, say so in your summary rather \
+than inventing a plausible-sounding company or trial.
+
+Don't spend search budget hunting for contact emails or names — that's a \
+separate, more reliable step (Hunter.io) after this one.
+
+Return a short prose summary of your search (what you searched, what you \
+found, any notable gaps or things you excluded and why), followed by \
+exactly one fenced ```json code block with this exact shape:
+
+```json
+{{
+  "leads": [
+    {{
+      "signal_type": "phase_transition_deep_signal",
+      "company_name": "...",
+      "company_domain": "..." or null,
+      "trial_name": "..." or null,
+      "drug_asset_name": "..." or null,
+      "signal_detail": "..." (1-2 sentence factual summary for the report, synthesized from all sources),
+      "email_opening": "..." (the 2-4 sentence drafted opening described above),
+      "source_urls": ["...", "..."] (every corroborating source URL, at least one),
+      "contact_name": null,
+      "contact_title": null
+    }}
+  ],
+  "excluded": [
+    {{"company_name": "...", "reason": "..."}}
+  ]
+}}
+```
+"""
+
+
+def _stream_claude_research(prompt: str, max_uses: int, progress_message: str) -> str:
+    """Shared Claude web-search streaming call used by every Claude-driven
+    search in this tool (currently run_research() for the conference search
+    and run_phase_transition_search() for the phase-transition deep search)
+    — only the prompt, search budget, and progress message differ between
+    callers; the streaming/cost-printing/error-handling logic is identical.
+    """
+    client = anthropic.Anthropic()
     full_text_parts = []
-    print("Researching trials (this can take a few minutes)...\n", file=sys.stderr)
+    print(f"{progress_message}\n", file=sys.stderr)
 
     try:
         with client.messages.stream(
@@ -334,7 +433,7 @@ def run_research(args: argparse.Namespace) -> str:
                 {
                     "type": "web_search_20260209",
                     "name": "web_search",
-                    "max_uses": 90,
+                    "max_uses": max_uses,
                 }
             ],
             messages=[{"role": "user", "content": prompt}],
@@ -382,6 +481,31 @@ def run_research(args: argparse.Namespace) -> str:
         ) from exc
 
     return "".join(full_text_parts)
+
+
+def run_research(args: argparse.Namespace) -> str:
+    """Send the conference-search research prompt to Claude and return the
+    full streamed response."""
+    prompt = build_prompt(args)
+    return _stream_claude_research(
+        prompt, max_uses=90, progress_message="Researching trials (this can take a few minutes)..."
+    )
+
+
+def run_phase_transition_search(args: argparse.Namespace) -> str:
+    """Send the phase-transition deep-search prompt to Claude and return the
+    full streamed response. See build_phase_transition_prompt() for what
+    makes this different from run_research(): one narrow signal, but full
+    open-web search reach (LinkedIn, biotech news, blogs, hospital/
+    university press — not limited to named conferences or a fixed source
+    list), with Claude itself responsible for cross-source dedup and
+    drafting a synthesized email opening per lead."""
+    prompt = build_phase_transition_prompt(args)
+    return _stream_claude_research(
+        prompt,
+        max_uses=60,
+        progress_message="Searching broadly for Phase 1-to-Phase 2 transition signals (this can take a few minutes)...",
+    )
 
 
 def parse_research_output(text: str):
@@ -498,6 +622,7 @@ SIGNAL_LABELS = {
     "phase2_filing_by_returning_sponsor": "New Phase 2 Filing (Returning Sponsor)",
     "sec_filing_signal": "SEC Filing Signal",
     "press_release_signal": "Press Release Signal",
+    "phase_transition_deep_signal": "Phase Transition (Deep Search)",
 }
 
 
@@ -608,6 +733,16 @@ def _opening_and_transition(lead: dict, args: argparse.Namespace) -> tuple:
         opening = f'I saw the press release "{detail}."'
         transition = f"Given this, {intro} as you plan your next stage of clinical development."
 
+    elif signal_type == "phase_transition_deep_signal":
+        # Unlike every other type, the opening here is drafted by Claude
+        # itself as part of the research call (see build_phase_transition_prompt()),
+        # not constructed in Python — the whole point of this signal type is
+        # synthesizing a narrative across multiple corroborating sources,
+        # which needs actual understanding, not a template. Still flagged
+        # for review in render_report() like every non-trial_result type.
+        opening = lead.get("email_opening") or f"I read about {company}'s recent progress in {args.indication}."
+        transition = f"Given this, {intro} as you plan your next stage of clinical development."
+
     else:  # "trial_result" — the hard-specified template, do not alter
         abstract_ref = f'"{lead.get("abstract_title") or lead.get("trial_name") or "your recent presentation"}"'
         if lead.get("abstract_number"):
@@ -660,11 +795,10 @@ def render_report(
     hunter_enabled: bool,
     repeat_leads: Optional[list] = None,
 ) -> str:
-    # render_report() is shared by both the conference search (Claude web
-    # research) and the trial-signals search (ClinicalTrials.gov/SEC EDGAR/
-    # press-release RSS, no LLM) — they're separate, independently-run
-    # pipelines (see CLAUDE.md), so their args.Namespaces differ: only the
-    # conference search's has .conference/.year/.phase.
+    # render_report() is shared by all three searches (conference, trial-signals,
+    # phase-transitions — see CLAUDE.md), which are separate, independently-run
+    # pipelines, so their args.Namespaces differ: only the conference search's
+    # has .conference/.year/.phase; only the phase-transitions search's has .days.
     if hasattr(args, "conference"):
         conference_list = " and ".join(args.conference)
         years = ", ".join(str(y) for y in args.year)
@@ -673,6 +807,13 @@ def render_report(
             f"conference highlights, funding, leadership changes, new trial registrations, "
             f"regulatory designations/milestones, trial expansions, protocol amendments, "
             f"hiring signals, and vendor-switch signals."
+        )
+    elif hasattr(args, "days"):
+        scope_line = (
+            f"**Scope searched:** open web search (LinkedIn, biotech/pharma news sites, company "
+            f"blogs, hospital/university press, and more) for Phase 1-to-Phase 2 transition signals "
+            f"in the last {args.days} days — Claude-driven, costs API usage, broader source reach "
+            f"than the trial-signals search below/above."
         )
     else:
         scope_line = (
@@ -719,12 +860,23 @@ def render_report(
             lines.append(f"**Signal:** {detail}")
         lines.append("")
 
-        source_label = "Abstract" if signal_type in ("trial_result", "conference_highlight") else "Source"
-        if lead.get("abstract_url"):
-            note = f" — {lead['abstract_url_note']}" if lead.get("abstract_url_note") else ""
-            lines.append(f"**{source_label}:** [{lead.get('abstract_title') or 'link'}]({lead['abstract_url']}){note}")
+        if signal_type == "phase_transition_deep_signal" and lead.get("source_urls"):
+            # Multiple corroborating sources, deliberately listed together
+            # rather than picking just one — see build_phase_transition_prompt()'s
+            # cross-source-dedup instruction: this lead already represents
+            # one underlying event Claude found described in more than one
+            # place, and showing every source lets the user judge how well
+            # corroborated it is.
+            lines.append("**Sources:**")
+            for url in lead["source_urls"]:
+                lines.append(f"- {url}")
         else:
-            lines.append(f"**{source_label}:** no direct link found")
+            source_label = "Abstract" if signal_type in ("trial_result", "conference_highlight") else "Source"
+            if lead.get("abstract_url"):
+                note = f" — {lead['abstract_url_note']}" if lead.get("abstract_url_note") else ""
+                lines.append(f"**{source_label}:** [{lead.get('abstract_title') or 'link'}]({lead['abstract_url']}){note}")
+            else:
+                lines.append(f"**{source_label}:** no direct link found")
         lines.append("")
 
         if contact and contact.email:
@@ -754,7 +906,13 @@ def render_report(
 
         subject, body = draft_email(lead, contact, args)
         lines.append("**Draft email:**")
-        if signal_type != "trial_result":
+        if signal_type == "phase_transition_deep_signal":
+            lines.append(
+                "_(this opening was synthesized by Claude from the sources above during "
+                "this search, not a fixed template — verify every fact against the source "
+                "links before sending)_"
+            )
+        elif signal_type != "trial_result":
             lines.append(
                 "_(this signal type's opening was drafted by Claude Code as a starting "
                 "point, not hand-specified the way the trial-result template was — "
@@ -863,7 +1021,7 @@ def render_csv(enriched_leads: list, args: argparse.Namespace) -> str:
             "company_domain": lead.get("company_domain") or "",
             "headline": _lead_title(lead),
             "detail": lead.get("result_summary") or lead.get("signal_detail") or "",
-            "source_url": lead.get("abstract_url") or "",
+            "source_url": lead.get("abstract_url") or "; ".join(lead.get("source_urls") or []),
             "draft_subject": subject,
             "draft_body": body,
             **_contact_csv_fields(lead, contact, args),
@@ -874,11 +1032,17 @@ def render_csv(enriched_leads: list, args: argparse.Namespace) -> str:
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    """Two independent subcommands (see CLAUDE.md): "conferences" is the
-    original Claude-driven web research (costs real API usage) and
-    "trial-signals" is the free, deterministic ClinicalTrials.gov/SEC
-    EDGAR/press-release-RSS check (no LLM, no API cost) — split so the free
-    one can be run far more often without touching the paid one's budget.
+    """Three independent subcommands (see CLAUDE.md): "conferences" is the
+    original Claude-driven web research across 11 signal types (costs real
+    API usage); "trial-signals" is the free, deterministic ClinicalTrials.gov/
+    SEC EDGAR/press-release-RSS check (no LLM, no API cost); "phase-transitions"
+    is a narrower Claude-driven deep web search focused only on Phase
+    1-to-Phase 2 transition signals, with much broader source reach than
+    trial-signals' three fixed sources (LinkedIn, biotech news, blogs,
+    hospital/university press) — also costs API usage. Kept as three
+    separate subcommands so the two free-vs-paid boundaries stay clear and
+    the free one can be run far more often without touching either paid
+    budget.
     """
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -963,6 +1127,26 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--no-prwire",
         action="store_true",
         help="Skip the PR Newswire/Business Wire/GlobeNewswire RSS check (free, no API key, no LLM involved).",
+    )
+
+    phase_parser = subparsers.add_parser(
+        "phase-transitions",
+        parents=[common],
+        help="Claude-driven deep web search (LinkedIn, biotech news, blogs, hospital/university press) "
+        "for Phase 1-to-Phase 2 transition signals only — costs API usage, broader source reach than "
+        "trial-signals' three fixed sources.",
+    )
+    phase_parser.add_argument(
+        "--days",
+        type=int,
+        default=60,
+        help="How many days back to search for a transition signal (default: 60).",
+    )
+    phase_parser.add_argument(
+        "--seen-file",
+        default="phase_transition_seen_leads.json",
+        help="Path to the local dedup file (default: phase_transition_seen_leads.json — kept separate "
+        "from the other two searches' seen-files since these are independent searches).",
     )
 
     return parser
@@ -1051,14 +1235,25 @@ def _run_trial_signals_cli(args: argparse.Namespace) -> None:
     _finalize_and_write("", leads, [], args, raw_response=None)
 
 
+def _run_phase_transitions_cli(args: argparse.Namespace) -> None:
+    if not args.output:
+        args.output = default_phase_transition_basename(args.indication) + ".md"
+
+    raw_response = run_phase_transition_search(args)
+    preamble, leads, excluded = parse_research_output(raw_response)
+    _finalize_and_write(preamble, leads, excluded, args, raw_response=raw_response)
+
+
 def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
 
     if args.command == "conferences":
         _run_conferences_cli(args)
-    else:
+    elif args.command == "trial-signals":
         _run_trial_signals_cli(args)
+    else:
+        _run_phase_transitions_cli(args)
 
 
 if __name__ == "__main__":

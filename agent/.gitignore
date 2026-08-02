@@ -8,10 +8,13 @@ leads_report*.csv
 *_leads_report.csv
 *_trial_signals_report.md
 *_trial_signals_report.csv
+*_phase_transition_report.md
+*_phase_transition_report.csv
 run_windows.bat
 seen_leads.json
 trial_signals_seen_leads.json
 sponsor_phase_history.json
+phase_transition_seen_leads.json
 gui_config.json
 conference_dates_cache.json
 build/

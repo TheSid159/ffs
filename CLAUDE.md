@@ -5,30 +5,41 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this repository is
 
 A single-purpose business development tool for an imaging CRO ("Elevate
-Imaging"). It runs **two independent searches**, each its own report, kept
-deliberately separate because one costs real money and the other doesn't:
+Imaging"). It runs **three independent searches**, each its own report,
+kept deliberately separate because their cost/scope profiles differ:
 
 1. **Conference search** — uses the Claude API with the web search tool to
    find business-development leads across eleven signal types (see "Eleven
    lead signal types" below) at named oncology/urology conferences and
-   beyond. This is the paid path (Claude + web search usage per run — see
+   beyond. This is a paid path (Claude + web search usage per run — see
    "Per-run cost estimate" below).
 2. **Trial signals search** — free, deterministic checks against
    ClinicalTrials.gov, SEC EDGAR filings, and press-release RSS feeds (see
    "Trial signals search" below). No LLM call, no API cost, so it's meant
-   to be run far more often than the conference search — daily or even
+   to be run far more often than either paid search — daily or even
    hourly, with zero budget impact.
+3. **Phase transition search** — a narrower, deeper Claude-driven search
+   (see "Phase transition deep search" below) focused on just one signal
+   (a Phase 1-to-Phase 2 transition) but with full open-web reach —
+   LinkedIn, biotech news sites, blogs, hospital/university press — not
+   limited to the trial-signals search's three fixed sources. Also a paid
+   path, and deliberately kept separate from the conference search since
+   it's a different kind of research task (one narrow signal hunted
+   broadly, vs. eleven signals hunted at named conferences).
 
-Either search's leads get a verified CEO/CMO contact lookup via Hunter.io,
+Every search's leads get a verified CEO/CMO contact lookup via Hunter.io,
 and — for `trial_result` leads only — a hand-specified outreach email
-template (every other signal type gets a Claude-Code-drafted starting
-point instead, flagged for review). There is no application server or
-database. There are two front ends over the same two pipelines: a Tkinter
-desktop GUI (`gui.py`, the primary one — the end user is non-technical and
+template (every other signal type gets a drafted starting point instead,
+flagged for review — either a Claude-Code-authored Python template, or, for
+`phase_transition_deep_signal` leads specifically, a narrative Claude
+itself synthesizes per-lead at research time from every corroborating
+source it found). There is no application server or database. There are
+two front ends over the same three pipelines: a Tkinter desktop GUI
+(`gui.py`, the primary one — the end user is non-technical and
 terminal/PowerShell friction was a repeated, significant source of real
 problems), with one button per search, and a CLI (`bd_agent.py`) with one
-subcommand per search, for scripting. Both write a Markdown report (plus a
-CSV) per search.
+subcommand per search, for scripting. Each writes its own Markdown report
+(plus a CSV).
 
 ## Commands
 
@@ -39,10 +50,10 @@ python gui.py   # primary interface — prompts for API keys in the window, no e
 ```
 
 CLI equivalent (used for scripting, or when developing without a display) —
-two independent subcommands:
+three independent subcommands:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...   # from console.anthropic.com — only needed for "conferences"
+export ANTHROPIC_API_KEY=sk-ant-...   # from console.anthropic.com — needed for "conferences"/"phase-transitions"
 export HUNTER_API_KEY=...             # optional, from hunter.io/api-keys — omit to skip contact lookup
 
 # Paid: Claude-driven web research across 11 signal types at named conferences.
@@ -61,6 +72,14 @@ python bd_agent.py trial-signals \
   --sender-name "Dr. Darren Brennan" \
   --sender-title "Medical Director" \
   --sender-company "Elevate Imaging"
+
+# Paid: Claude-driven deep web search for one signal — Phase 1-to-Phase 2 transition.
+python bd_agent.py phase-transitions \
+  --indication "bladder cancer" \
+  --days 60 \
+  --sender-name "Dr. Darren Brennan" \
+  --sender-title "Medical Director" \
+  --sender-company "Elevate Imaging"
 ```
 
 There is no test suite, linter, or build step — `python -m py_compile
@@ -71,22 +90,23 @@ is the only pre-flight check currently used before committing changes
 headless dev environment — a `py_compile` syntax check still passes
 without it, but `gui_logic.py` is where the real, importable-and-testable
 logic lives; see Architecture below). Every CLI flag has a default (see
-`--help`), so both `bd_agent.py conferences` and `bd_agent.py
-trial-signals` also run with no other arguments for a smoke test. When
-editing `parse_research_output()`, `draft_email()`, `render_report()`, or
-anything in `gui_logic.py`, sanity check with fabricated lead dicts and
-`unittest.mock.patch` on `bd_agent.run_research` (no network calls needed)
-rather than only testing via a full paid run — see the git history around
-the Hunter.io integration and GUI commits for the pattern. The same
-applies to the trial-signals sources: `unittest.mock.patch` on
+`--help`), so all three of `bd_agent.py conferences`, `bd_agent.py
+trial-signals`, and `bd_agent.py phase-transitions` also run with no other
+arguments for a smoke test. When editing `parse_research_output()`,
+`draft_email()`, `render_report()`, or anything in `gui_logic.py`, sanity
+check with fabricated lead dicts and `unittest.mock.patch` on
+`bd_agent.run_research`/`run_phase_transition_search` (no network calls
+needed) rather than only testing via a full paid run — see the git
+history around the Hunter.io integration and GUI commits for the pattern.
+The same applies to the trial-signals sources: `unittest.mock.patch` on
 `clinicaltrials_gov._get`, `sec_edgar._get`, and `pr_wire_feeds._fetch`.
 
 ## Architecture
 
 Ten modules, no application framework:
 
-- **`agent/bd_agent.py`** — both pipelines, plus everything shared between
-  them (Hunter enrichment, email drafting, report/CSV rendering):
+- **`agent/bd_agent.py`** — all three pipelines, plus everything shared
+  between them (Hunter enrichment, email drafting, report/CSV rendering):
   1. `build_prompt()` renders one research prompt from the CLI args
      (conference list, years, indication, phase). It asks Claude to
      research leads via web search across **eleven signal types** (see
@@ -94,17 +114,24 @@ Ten modules, no application framework:
      ` ```json ` block** containing structured lead data. Claude is
      explicitly told *not* to spend search budget hunting for contacts;
      that's a separate, more reliable step now.
-  2. `run_research()` sends that prompt to `claude-opus-5` via
-     `client.messages.stream(...)` with the server-side
-     `web_search_20260209` tool (`max_uses=90` — raised from the original 30,
+  2. `_stream_claude_research(prompt, max_uses, progress_message)` is the
+     shared Claude web-search streaming call — sends a prompt to
+     `claude-opus-5` via `client.messages.stream(...)` with the server-side
+     `web_search_20260209` tool, streams text to stdout for progress
+     visibility, prints the usage/cost line, and handles
+     `anthropic.APIConnectionError`. Both `run_research()` (conference
+     search, `build_prompt()`, `max_uses=90` — raised from the original 30,
      which was sized for the single original signal type and ran out
-     routinely once the prompt grew to eleven signal categories),
-     streaming text to stdout
-     for progress visibility.
+     routinely once the prompt grew to eleven signal categories) and
+     `run_phase_transition_search()` (phase-transition search,
+     `build_phase_transition_prompt()`, `max_uses=60`) call this same
+     helper — only the prompt/budget/progress-message differ.
   3. `parse_research_output()` extracts the trailing JSON block via regex
-     (`JSON_FENCE_RE`) into `(preamble, leads, excluded)`. If parsing
-     fails, the caller falls back to writing Claude's raw text instead of
-     crashing — see `_run_conferences_cli()`.
+     (`JSON_FENCE_RE`) into `(preamble, leads, excluded)`. Prompt-agnostic,
+     so both `run_research()`'s and `run_phase_transition_search()`'s
+     output are parsed by the same function. If parsing fails, the caller
+     falls back to writing Claude's raw text instead of crashing — see
+     `_run_conferences_cli()`/`_run_phase_transitions_cli()`.
   4. `run_trial_signals_search()` is the free path's equivalent entry
      point: it aggregates `clinicaltrials_gov.find_leads()`,
      `sec_edgar.find_leads()`, and `pr_wire_feeds.find_leads()` — no LLM
@@ -113,26 +140,36 @@ Ten modules, no application framework:
      independently, so one unreachable source never loses the other two's
      leads.
   5. `enrich_contacts()` calls `hunter_contacts.find_contact()` per lead
-     (from either pipeline), then `draft_email()` renders the outreach
-     email **entirely in Python** from a fixed string template (not asked
-     of the model) using the structured lead data plus whatever contact
-     Hunter confirmed — **only for `signal_type == "trial_result"` leads**
-     (see "Eleven lead signal types" below for why). `render_report()`
-     assembles the final Markdown, branching its header text on whether
-     `args` has `.conference` (conference search) or not (trial-signals
-     search) since the two Namespaces differ — see
-     `build_arg_parser()`/`_run_conferences_cli()`/`_run_trial_signals_cli()`.
+     (from any of the three pipelines), then `draft_email()` renders the
+     outreach email using the structured lead data plus whatever contact
+     Hunter confirmed. For `signal_type == "trial_result"` leads this is
+     the **hard-specified, verbatim** template (see "The fixed email
+     opening" below); for `phase_transition_deep_signal` leads it's
+     `lead["email_opening"]` — text Claude itself synthesized at research
+     time from every corroborating source it found (see "Phase transition
+     deep search" below), not a Python template at all; every other
+     signal type gets a fixed Python-templated opening drafted by Claude
+     Code, flagged for review. `render_report()` assembles the final
+     Markdown, branching its header text on whether `args` has
+     `.conference` (conference search), `.days` (phase-transition search),
+     or neither (trial-signals search) since the three Namespaces differ —
+     see `build_arg_parser()`/`_run_conferences_cli()`/
+     `_run_trial_signals_cli()`/`_run_phase_transitions_cli()`.
 
-  The two searches are independent CLI subcommands
-  (`bd_agent.py conferences ...` / `bd_agent.py trial-signals ...`, see
-  `build_arg_parser()`) and independent GUI buttons (see `gui.py` below) —
-  deliberately never merged into one flow, so the free trial-signals
-  search can be run as often as wanted without ever touching the
-  conference search's API budget. Each writes to its own auto-named
-  report/CSV pair (`default_output_basename()` vs
-  `default_trial_signals_basename()`) and its own dedup state
-  (`seen_leads.json` vs `trial_signals_seen_leads.json` by default), so
-  running one never overwrites or contaminates the other's history.
+  The three searches are independent CLI subcommands
+  (`bd_agent.py conferences ...` / `bd_agent.py trial-signals ...` /
+  `bd_agent.py phase-transitions ...`, see `build_arg_parser()`) and
+  independent GUI buttons (see `gui.py` below) — deliberately never merged
+  into one flow, so the free trial-signals search can be run as often as
+  wanted without ever touching either paid search's API budget, and the
+  two paid searches (different research tasks — eleven signals at named
+  conferences vs. one signal hunted across the open web) stay separately
+  costed and separately reportable. Each writes to its own auto-named
+  report/CSV pair (`default_output_basename()` /
+  `default_trial_signals_basename()` / `default_phase_transition_basename()`)
+  and its own dedup state (`seen_leads.json` / `trial_signals_seen_leads.json`
+  / `phase_transition_seen_leads.json` by default), so running one never
+  overwrites or contaminates another's history.
 
 ### Eleven lead signal types
 
@@ -290,6 +327,72 @@ Windows, this tool's target platform.
 Contact lookup is **optional** — if `HUNTER_API_KEY` isn't set,
 `enrich_contacts()` returns `None` for every contact and the report says
 so explicitly rather than silently omitting the caveat.
+
+### Phase transition deep search (paid, Claude-driven, one signal)
+
+`build_phase_transition_prompt()` + `run_phase_transition_search()` are a
+third search, added after the user watched the free trial-signals search
+work correctly and asked for a more "agentic" version of the same signal
+(Phase 1-to-Phase 2 transition) with full open-web reach — LinkedIn,
+biotech/pharma news sites, company blogs, hospital/university press —
+rather than the trial-signals search's three fixed sources. Explicitly
+approved as a paid, token-costing path by the user ("I know this will
+cost tokens-thats OK").
+
+Two things make this prompt different from every other Claude call in
+this tool:
+
+1. **Cross-source dedup is Claude's job, not Python's.** The prompt
+   explicitly instructs: if multiple sources (an SEC 8-K, a press release,
+   a LinkedIn post) describe the same underlying transition event, report
+   it as ONE lead with every source URL listed in `source_urls`, not as
+   separate leads. This has to happen at generation time — deciding "is
+   this the same story" needs actual understanding of the content, which
+   is exactly what Python string/ID matching (as used for `seen_leads.py`'s
+   *cross-run* dedup) can't do. `seen_leads.py` still does its normal
+   cross-run dedup afterward — this is a different, complementary kind of
+   dedup (within-one-run, across-sources).
+2. **The email opening is drafted by Claude at research time, not by a
+   Python template.** Every other signal type's opening is either the
+   hard-specified `trial_result` template or a fixed Python string
+   Claude Code wrote once during development (see `_opening_and_transition()`).
+   For `phase_transition_deep_signal`, the prompt asks Claude to write a
+   2-4 sentence `email_opening` per lead, synthesized from whatever
+   sources it actually found — since the whole point of this signal is
+   combining multiple sources into one coherent narrative, that has to be
+   generated per-lead, not templated. `_opening_and_transition()` just
+   uses `lead["email_opening"]` directly. `render_report()`'s review-note
+   for this type is worded differently from the other Python-templated
+   types for the same reason — see the `signal_type ==
+   "phase_transition_deep_signal"` branch there.
+
+Other notable choices: `--days` (default 60) scopes the search window,
+matching the user's own example ("Bladder cancer last 60 days"). Contact
+hunting is still explicitly told to stay out of scope (that's Hunter.io's
+job). `max_uses=60` for the web-search tool — narrower than the
+conference search's 90 (one signal, not eleven categories) but still
+generous, since "search broadly" is the entire point here.
+`seen_leads.dedup_key()` keys this signal type on `drug_asset_name`/
+`trial_name` rather than `signal_detail` — the free-text detail is a fresh
+Claude-synthesized summary every run (even more likely to be reworded
+between runs than other free-text signal types), where the asset/trial
+name Claude extracted is a real proper noun and more stable.
+`render_report()` shows every URL in `source_urls` as a bulleted list
+(instead of the single-link "Abstract"/"Source" line every other signal
+type gets) specifically so the user can see how well-corroborated a lead
+is.
+
+This is the second Claude-driven search in the tool (after the conference
+search) but is a separate subcommand/button rather than a mode of either
+existing search, so all three searches' cost/scope profiles stay legible
+at a glance: conferences (paid, 11 signals, named conferences),
+trial-signals (free, 3 fixed sources), phase-transitions (paid, 1 signal,
+open web). Not yet verified against a live run — built and tested here
+with `unittest.mock.patch` on `bd_agent.run_phase_transition_search()`
+using a fabricated multi-source lead, following the same fabricated-data
+testing discipline as the rest of this tool; a real run should be checked
+once by the user before relying on it, same as every other new source
+added this session.
 
 ### Trial signals search (free, no LLM)
 
@@ -459,33 +562,35 @@ there is no `raw_response` to fall back to if something goes wrong — see
 
 - **`agent/gui_logic.py` / `agent/gui.py`** — the GUI is split specifically
   so most of it is testable without a display: `gui_logic.py` has zero
-  Tkinter import and holds everything meaningful. Since the two searches
+  Tkinter import and holds everything meaningful. Since the three searches
   are independent (see "What this repository is" above), this module has
   **one build-args function and one pipeline function per search**, not
-  one shared pair: `build_conference_args()` / `run_conference_pipeline()`
+  one shared set: `build_conference_args()` / `run_conference_pipeline()`
   for the conference search, `build_trial_signals_args()` /
-  `run_trial_signals_pipeline()` for the trial-signals search. Both
-  pipeline functions funnel through a shared private
-  `_finalize_and_write()` (dedup -> Hunter enrich -> render -> write —
-  the only part that's actually identical between the two) and mirror
-  `bd_agent.py`'s own `_run_conferences_cli()`/`_run_trial_signals_cli()`/
+  `run_trial_signals_pipeline()` for the trial-signals search,
+  `build_phase_transition_args()` / `run_phase_transition_pipeline()` for
+  the phase-transition search. All three pipeline functions funnel through
+  a shared private `_finalize_and_write()` (dedup -> Hunter enrich ->
+  render -> write — the only part that's actually identical across all
+  three) and mirror `bd_agent.py`'s own `_run_conferences_cli()`/
+  `_run_trial_signals_cli()`/`_run_phase_transitions_cli()`/
   `_finalize_and_write()`, just returning the report path instead of only
   printing it. `QueueWriter` is a file-like object for routing
-  `print()`/stdout output into a `queue.Queue`, used by both.
+  `print()`/stdout output into a `queue.Queue`, used by all three.
 
-  `gui.py` is a thin Tkinter shell with **two independent "Search ..."
-  buttons and two independent "Open ... Report" buttons** (one pair per
+  `gui.py` is a thin Tkinter shell with **three independent "Search ..."
+  buttons and three independent "Open ... Report" buttons** (one pair per
   search), sharing one log window and one "New Search" reset button.
-  Clicking either search button disables *both* run buttons until it
+  Clicking any search button disables *all three* run buttons until it
   finishes (`_set_run_buttons_state()`) — there's only one background
   thread slot in use at a time, and Tkinter widgets aren't thread-safe to
-  touch from more than one thread regardless. Only the conference
-  search's button requires an Anthropic API key
-  (`on_run_conferences()` checks for it; `on_run_trial_signals()`
+  touch from more than one thread regardless. Only the two paid searches'
+  buttons require an Anthropic API key (`on_run_conferences()` and
+  `on_run_phase_transitions()` both check for it; `on_run_trial_signals()`
   deliberately does not, since that search has no LLM call at all) — this
-  is the one behavioral difference between the two search handlers that
-  actually matters, so don't add an Anthropic-key check to
-  `on_run_trial_signals()` "for consistency." Both handlers redirect
+  is the one behavioral difference that actually matters between the
+  three search handlers, so don't add an Anthropic-key check to
+  `on_run_trial_signals()` "for consistency." All three handlers redirect
   `sys.stdout`/`sys.stderr` to a shared `QueueWriter` before running their
   pipeline on a background thread (network calls would otherwise freeze
   the window), and only touch Tkinter widgets from `_poll_log_queue()` on
@@ -653,13 +758,20 @@ complete-looking report.
   their own alert-phrase lists in `sec_edgar.py` and/or new
   `clinicaltrials_gov.py` queries, following the same pattern as the
   signals already built, if prioritized later.
-- Neither trial-signals source nor the conference search can be scoped to
-  a specific company by name today — both only take `--indication`. A
-  "everything about Company X" lookup across the three trial-signals
-  sources would be a natural extension of the same pattern (add a
+- None of the three searches can be scoped to a specific company by name
+  today — all three only take `--indication`. A "everything about Company
+  X" lookup would be a natural extension of the same pattern (add a
   `company` query param alongside `indication` to each of
-  `clinicaltrials_gov.py`/`sec_edgar.py`/`pr_wire_feeds.py`) but isn't
-  built.
+  `clinicaltrials_gov.py`/`sec_edgar.py`/`pr_wire_feeds.py`, or just ask
+  for it directly in `build_phase_transition_prompt()`) but isn't built.
+- The phase-transition search doesn't check what the trial-signals search
+  already found before spending API budget — it's plausible for both to
+  independently surface the same underlying event (e.g. the same SEC
+  filing), one for free and one paid. Cross-referencing against
+  `trial_signals_seen_leads.json` before running the phase-transition
+  search would avoid paying to rediscover something the free search
+  already has, but isn't built; for now the two searches' dedup stores
+  are entirely separate (see `default_output_basename()` et al.).
 - `pr_wire_feeds.DEFAULT_FEED_URLS` is the least-verified piece of this
   whole trial-signals search — see its module docstring and the
   dedicated callout in the `agent/pr_wire_feeds.py` section above. If a

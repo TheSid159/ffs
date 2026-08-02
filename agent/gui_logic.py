@@ -144,6 +144,35 @@ def build_trial_signals_args(form: dict) -> argparse.Namespace:
     )
 
 
+def build_phase_transition_args(form: dict) -> argparse.Namespace:
+    """Build the Namespace for the phase-transition deep search (bd_agent.
+    run_phase_transition_search()) from a plain dict of GUI form values.
+    Like trial-signals, no conference/year/phase fields — but unlike
+    trial-signals, this one costs API usage (Claude-driven)."""
+    hunter_min_confidence = int(form.get("hunter_min_confidence", "").strip() or 90)
+    indication = form.get("indication", "").strip() or "bladder cancer"
+    days = int(form.get("phase_transition_days", "").strip() or 60)
+
+    output_field = form.get("output", "").strip()
+    output = output_field or str(app_dir() / (bd_agent.default_phase_transition_basename(indication) + ".md"))
+
+    return argparse.Namespace(
+        indication=indication,
+        days=days,
+        sender_name=form.get("sender_name", "").strip() or "[Your Name]",
+        sender_title=form.get("sender_title", "").strip() or "[Your Title]",
+        sender_company=form.get("sender_company", "").strip() or "Elevate Imaging",
+        output=output,
+        hunter_api_key=form.get("hunter_api_key", "").strip() or None,
+        hunter_min_confidence=hunter_min_confidence,
+        hunter_delay_ms=4000,
+        # Kept separate from the other two searches' seen-files/state — all
+        # three are independent searches over disjoint signal types.
+        seen_file=str(app_dir() / "phase_transition_seen_leads.json"),
+        no_dedup=False,
+    )
+
+
 def _finalize_and_write(preamble: str, leads: list, excluded: list, args: argparse.Namespace, raw_response=None) -> Path:
     """Shared dedup -> Hunter enrich -> render -> write tail for both GUI
     pipelines below — mirrors bd_agent.py's `_finalize_and_write()` but
@@ -212,3 +241,11 @@ def run_trial_signals_pipeline(args: argparse.Namespace) -> Path:
     report path instead of just printing it."""
     leads = bd_agent.run_trial_signals_search(args)
     return _finalize_and_write("", leads, [], args, raw_response=None)
+
+
+def run_phase_transition_pipeline(args: argparse.Namespace) -> Path:
+    """Same steps as bd_agent._run_phase_transitions_cli(), but returns the
+    report path instead of just printing it."""
+    raw_response = bd_agent.run_phase_transition_search(args)
+    preamble, leads, excluded = bd_agent.parse_research_output(raw_response)
+    return _finalize_and_write(preamble, leads, excluded, args, raw_response=raw_response)

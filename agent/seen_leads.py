@@ -60,6 +60,17 @@ def dedup_key(lead: dict) -> str:
         registry_id = (lead.get("registry_id") or "").strip().lower()
         return f"{signal_type}|{company_name}|{registry_id}"
 
+    if signal_type == "phase_transition_deep_signal":
+        # signal_detail here is a fresh Claude-synthesized summary across
+        # however many sources it found *this run* — even more likely to be
+        # reworded between runs than the other free-text types below, so
+        # prefer drug_asset_name/trial_name (real proper nouns Claude
+        # extracted, not prose it composed) over signal_detail.
+        asset = (lead.get("drug_asset_name") or lead.get("trial_name") or "").strip().lower()
+        if domain and asset:
+            return f"{signal_type}|{domain}|{asset}"
+        return f"{signal_type}|{company_name}|{asset}"
+
     # Every other signal type (funding, leadership_change, conference_highlight,
     # regulatory_designation, regulatory_milestone, trial_expansion,
     # protocol_amendment, hiring_signal, vendor_switch_signal, and

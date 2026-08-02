@@ -1,8 +1,8 @@
 # agent
 
-Business development lead-finder for an imaging CRO. It runs **two
+Business development lead-finder for an imaging CRO. It runs **three
 independent searches**, each producing its own report, kept deliberately
-separate because one costs real API money and the other doesn't:
+separate because their cost/scope profiles differ:
 
 ### 1. Conference search (Claude web research — costs API usage)
 
@@ -43,13 +43,37 @@ All are exact-match against real structured data or real filing/press-release
 text — never Claude's interpretation of what it found. Pass
 `--no-ctgov`/`--no-secedgar`/`--no-prwire` to skip any one of the three.
 
-### Both searches
+### 3. Phase transition search (Claude deep web search — costs API usage)
+
+A narrower, deeper version of the same signal the trial-signals search
+checks for (a company moving from Phase 1 to Phase 2), but instead of
+three fixed sources, Claude searches the open web — LinkedIn, biotech/pharma
+news sites, company blogs, hospital/university press, and anywhere else it
+finds — for the last N days (default 60). Two things make this different
+from a simple web search:
+
+- If Claude finds the same underlying event described by more than one
+  source (say, an SEC filing and a press release both about the same
+  Phase 2 initiation), it reports that as **one lead**, not two — every
+  source it found gets listed together.
+- The outreach email opening isn't a fixed template — Claude drafts it
+  itself per lead, synthesized from everything it found about that
+  specific company, so it can reference the real, specific facts rather
+  than generic language.
+
+Costs API usage like the conference search, but is a separate search
+(separate button/subcommand, separate report, separate history) since it's
+a different kind of research task — one signal hunted broadly, rather than
+eleven signals hunted at named conferences.
+
+### All three searches
 
 - Look up a verified CEO/CMO contact for each company via **Hunter.io**,
   gated on a minimum confidence score (default 90/100) — a low-confidence
   guess is never reported as a confirmed contact.
-- Render a preliminary outreach email per lead from a template (the
-  `trial_result` opening is a **fixed**, hand-specified template; every
+- Render a preliminary outreach email per lead (the `trial_result` opening
+  is a **fixed**, hand-specified template; the phase-transition search's
+  opening is drafted by Claude itself per lead at research time; every
   other signal type gets a Claude-Code-drafted starting point, flagged in
   the report for review).
 - Remember what they've already shown you (a separate `seen_leads.json`-style
@@ -59,9 +83,9 @@ text — never Claude's interpretation of what it found. Pass
 ## Setup
 
 1. Get an Anthropic API key from https://console.anthropic.com (Settings →
-   API Keys), or run `ant auth login` if you have the Anthropic CLI. Only
-   needed for the conference search — the trial-signals search doesn't use
-   Claude at all.
+   API Keys), or run `ant auth login` if you have the Anthropic CLI. Needed
+   for the conference search and the phase-transition search — the
+   trial-signals search doesn't use Claude at all.
 2. (Optional, recommended) Get a Hunter.io API key from
    https://hunter.io/api-keys for verified contact lookup. Without one, the
    report still generates but contacts are unverified — only what was found
@@ -80,12 +104,12 @@ terminal, no environment variables, no editing files. Your keys and last-
 used settings are saved locally to `gui_config.json` (gitignored — never
 commit it) and pre-filled next time, so you only type them once.
 
-There are **two independent buttons**: **Search Conferences** (needs your
-Anthropic API key) and **Search Trial Signals** (free, no Anthropic key
-needed). Click either one, watch progress in the shared log window, then
-use the matching **Open Conference Report** / **Open Trial Signals
-Report** button when it's done. Running one never affects the other's
-report or history.
+There are **three independent buttons**: **Search Conferences** and
+**Search Phase Transitions** (both need your Anthropic API key) and
+**Search Trial Signals** (free, no Anthropic key needed). Click any one,
+watch progress in the shared log window, then use the matching
+**Open ... Report** button when it's done. Running one never affects
+another's report or history.
 
 At the top of the window is a **Conference Calendar** banner that flags
 any major meeting starting within the next 45 days, so you know when it's
@@ -114,11 +138,11 @@ file itself lives, not wherever you happen to run it from. Re-run the same
 
 ## Run — command line (alternative)
 
-Two subcommands, matching the two searches above:
+Three subcommands, matching the three searches above:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...    # only needed for "conferences"
-export HUNTER_API_KEY=...              # optional, both subcommands
+export ANTHROPIC_API_KEY=sk-ant-...    # needed for "conferences" and "phase-transitions"
+export HUNTER_API_KEY=...              # optional, all three subcommands
 
 # Conference search (costs API usage)
 python bd_agent.py conferences \
@@ -138,16 +162,27 @@ python bd_agent.py trial-signals \
   --sender-title "Medical Director" \
   --sender-company "Elevate Imaging" \
   --hunter-min-confidence 90
+
+# Phase transition deep search (costs API usage)
+python bd_agent.py phase-transitions \
+  --indication "bladder cancer" \
+  --days 60 \
+  --sender-name "Dr. Darren Brennan" \
+  --sender-title "Medical Director" \
+  --sender-company "Elevate Imaging" \
+  --hunter-min-confidence 90
 ```
 
-`--output` is optional on both — leave it out and the report/CSV are named
-from your search parameters (e.g.
+`--output` is optional on all three — leave it out and the report/CSV are
+named from your search parameters (e.g.
 `bladder_cancer_ASCO_GU_ASCO_ESMO_AUA_2025_2026_leads_report.md` for the
 conference search, `bladder_cancer_trial_signals_report.md` for the
-trial-signals search), so re-running with different parameters — or
-running the other search — won't silently overwrite an unrelated earlier
-report. Pass `--output some_name.md` to pick your own name instead. Same
-behavior in the GUI — leave the "Output file" field blank to auto-name.
+trial-signals search, `bladder_cancer_phase_transition_report.md` for the
+phase-transition search), so re-running with different parameters — or
+running a different search — won't silently overwrite an unrelated
+earlier report. Pass `--output some_name.md` to pick your own name
+instead. Same behavior in the GUI — leave the "Output file" field blank to
+auto-name.
 
 On Windows, `run_windows.bat.example` is a template for a double-clickable
 version of the conference-search command (copy to `run_windows.bat`, fill
@@ -168,10 +203,13 @@ Designation]`, `[Regulatory Milestone]`, `[Trial Expansion]`, `[Protocol
 Amendment]`, `[Hiring Signal]`, `[Vendor-Switch Signal]`; trial-signals
 search: `[Trial Milestone Approaching]`, `[Trial Recently Completed]`,
 `[New Phase 2 Filing (Returning Sponsor)]`, `[SEC Filing Signal]`, `[Press
-Release Signal]` — each with the detail, a source link, the verified
-contact (or an explicit "not confirmed" / "not publicly available" — it
-will never invent an email or a confidence score), and a draft outreach
-email. `[Trial Result]` leads always open with:
+Release Signal]`; phase-transition search: `[Phase Transition (Deep
+Search)]` — each with the detail, a source link (or, for phase-transition
+leads that were corroborated by more than one source, every source
+listed), the verified contact (or an explicit "not confirmed" / "not
+publicly available" — it will never invent an email or a confidence
+score), and a draft outreach email. `[Trial Result]` leads always open
+with:
 
 > Dear [contact name], I read with interest your recent paper, "[abstract
 > title]" (Abstract #[abstract number]), at [meeting name] on [presentation
@@ -180,24 +218,27 @@ email. `[Trial Result]` leads always open with:
 > as you progress [drug/asset name] through its next stage of development.
 
 That exact wording was hand-specified and is treated as fixed. Every other
-signal type gets a draft too, but with an opening written by Claude Code
-as a starting point rather than hand-specified the same way — the report
-flags those with a note to review the wording before relying on it.
+signal type gets a draft too: the phase-transition search's opening is
+synthesized by Claude itself from the sources it found for that specific
+lead (verify every fact against the source links before sending); every
+other type's opening was written by Claude Code as a starting point rather
+than hand-specified the same way — the report flags those with a note to
+review the wording before relying on it.
 
 The script never sends anything — you review and send each draft yourself.
 
-Only the conference search costs API usage (typically a few dollars, since
-it does many web searches over an extended research task) — the
-trial-signals search is free. Both may use Hunter.io (one lookup per lead
-— check your Hunter plan's monthly search limit). An approximate cost for
-the conference search just completed — based on its actual token and
-search usage, not a guess — prints at the end of the progress log in both
-the GUI and CLI. It's an estimate, not an official bill; check
-console.anthropic.com for exact billing.
+Only the conference search and phase-transition search cost API usage
+(typically a few dollars each, since they do many web searches over an
+extended research task) — the trial-signals search is free. All three may
+use Hunter.io (one lookup per lead — check your Hunter plan's monthly
+search limit). An approximate cost for a paid search just completed —
+based on its actual token and search usage, not a guess — prints at the
+end of the progress log in both the GUI and CLI. It's an estimate, not an
+official bill; check console.anthropic.com for exact billing.
 
 ## Next steps to consider
 
-- Point either search at other indications via the GUI or CLI flags.
+- Point any search at other indications via the GUI or CLI flags.
 - Wire the output into HubSpot instead of a flat Markdown file.
-- Add a company-name-scoped lookup across the trial-signals sources
-  (today they're indication-scoped only).
+- Add a company-name-scoped lookup (today all three searches are
+  indication-scoped only).

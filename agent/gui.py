@@ -4,13 +4,17 @@ Desktop GUI for bd_agent.py — no terminal, no environment variables.
 
 Enter your API keys once; they're saved locally in gui_config.json (next to
 this file, gitignored) and pre-filled every time after. Fill in the search
-fields, then pick one of two independent searches:
+fields, then pick one of three independent searches:
 
-- "Search Conferences" — Claude-driven web research (costs real API usage,
-  needs an Anthropic API key).
+- "Search Conferences" — Claude-driven web research across 11 signal types
+  at named conferences (costs real API usage, needs an Anthropic API key).
 - "Search Trial Signals" — free, deterministic checks against
   ClinicalTrials.gov, SEC EDGAR, and press-release RSS feeds (no LLM, no
   Anthropic key needed, safe to run as often as you like).
+- "Search Phase Transitions" — Claude-driven deep web search (LinkedIn,
+  biotech news, blogs, hospital/university press) focused only on Phase
+  1-to-Phase 2 transition signals (costs real API usage, needs an
+  Anthropic API key).
 
 Each writes its own report and opens automatically when it's done.
 
@@ -29,9 +33,11 @@ from gui_logic import (
     CONFERENCE_DATES_CACHE_PATH,
     QueueWriter,
     build_conference_args,
+    build_phase_transition_args,
     build_trial_signals_args,
     load_config,
     run_conference_pipeline,
+    run_phase_transition_pipeline,
     run_trial_signals_pipeline,
     save_config,
     upcoming_meetings_banner_text,
@@ -49,17 +55,19 @@ class App(tk.Tk):
         ("sender_title", "Your title:", "Medical Director", 40),
         ("sender_company", "Company:", "Elevate Imaging", 40),
         ("hunter_min_confidence", "Hunter min confidence (0-100):", "90", 10),
+        ("phase_transition_days", "Search window in days — Phase Transitions search only:", "60", 10),
         ("output", "Output file (blank = auto-name from search below):", "", 40),
     ]
 
     def __init__(self):
         super().__init__()
         self.title("Elevate Imaging — BD Lead Finder")
-        self.geometry("780x760")
+        self.geometry("780x860")
         self.log_queue: "queue.Queue" = queue.Queue()
         self.config_data = load_config()
         self.conference_report_path = None
         self.trial_signals_report_path = None
+        self.phase_transition_report_path = None
         self.field_vars = {}
         self._build_ui()
         self.after(100, self._poll_log_queue)
@@ -116,6 +124,19 @@ class App(tk.Tk):
         )
         self.trial_open_button.pack(side="left", **pad)
 
+        phase_frame = ttk.LabelFrame(
+            self, text="Phase transitions search (deep web search — LinkedIn, biotech news, blogs — costs API usage)"
+        )
+        phase_frame.pack(fill="x", **pad)
+        self.phase_run_button = ttk.Button(
+            phase_frame, text="Search Phase Transitions", command=self.on_run_phase_transitions
+        )
+        self.phase_run_button.pack(side="left", **pad)
+        self.phase_open_button = ttk.Button(
+            phase_frame, text="Open Phase Transition Report", command=self.open_phase_transition_report, state="disabled"
+        )
+        self.phase_open_button.pack(side="left", **pad)
+
         self.new_search_button = ttk.Button(self, text="New Search", command=self.on_new_search)
         self.new_search_button.pack(anchor="w", **pad)
 
@@ -152,6 +173,10 @@ class App(tk.Tk):
                     self.trial_signals_report_path = payload
                     self.trial_open_button.configure(state="normal")
                     self._set_run_buttons_state("normal")
+                elif kind == "phase_transition_done":
+                    self.phase_transition_report_path = payload
+                    self.phase_open_button.configure(state="normal")
+                    self._set_run_buttons_state("normal")
                 elif kind == "error":
                     self._set_run_buttons_state("normal")
                 elif kind == "banner":
@@ -162,13 +187,14 @@ class App(tk.Tk):
         self.after(100, self._poll_log_queue)
 
     def _set_run_buttons_state(self, state: str) -> None:
-        # Both searches share one log window and can't usefully run at the
-        # same time (Tkinter widgets are only safe to touch from the main
-        # thread, and there's only one background-thread slot in use at
-        # once) — disable both while either is running, re-enable both when
-        # it finishes, regardless of which one was clicked.
+        # All three searches share one log window and can't usefully run at
+        # the same time (Tkinter widgets are only safe to touch from the
+        # main thread, and there's only one background-thread slot in use
+        # at once) — disable all three while any one is running, re-enable
+        # all three when it finishes, regardless of which one was clicked.
         self.conf_run_button.configure(state=state)
         self.trial_run_button.configure(state=state)
+        self.phase_run_button.configure(state=state)
 
     def _current_form(self) -> dict:
         form = {key: var.get() for key, var in self.field_vars.items()}
@@ -258,6 +284,44 @@ class App(tk.Tk):
         finally:
             sys.stdout, sys.stderr = old_stdout, old_stderr
 
+    def on_run_phase_transitions(self) -> None:
+        form = self._current_form()
+        if not form["anthropic_api_key"].strip():
+            messagebox.showerror("Missing key", "The phase transitions search needs your Anthropic API key.")
+            return
+
+        self._save_form(form)
+        try:
+            args = build_phase_transition_args(form)
+        except ValueError:
+            messagebox.showerror("Invalid input", "Search window (days) and Hunter min confidence must be numbers.")
+            return
+
+        os.environ["ANTHROPIC_API_KEY"] = form["anthropic_api_key"].strip()
+
+        self._set_run_buttons_state("disabled")
+        self.phase_open_button.configure(state="disabled")
+        self._clear_log()
+
+        threading.Thread(target=self._run_phase_transitions_in_background, args=(args,), daemon=True).start()
+
+    def _run_phase_transitions_in_background(self, args) -> None:
+        old_stdout, old_stderr = sys.stdout, sys.stderr
+        writer = QueueWriter(self.log_queue)
+        sys.stdout = writer
+        sys.stderr = writer
+        try:
+            report_path = run_phase_transition_pipeline(args)
+            self.log_queue.put(("text", f"\n\nDone! Phase transition report saved to: {report_path.resolve()}\n"))
+            self.log_queue.put(("phase_transition_done", report_path))
+        except PermissionError as exc:
+            self._report_permission_error(exc, args)
+        except Exception as exc:  # surface any failure in the window instead of a silent crash
+            self.log_queue.put(("text", f"\n\nError: {exc}\n"))
+            self.log_queue.put(("error", str(exc)))
+        finally:
+            sys.stdout, sys.stderr = old_stdout, old_stderr
+
     def _report_permission_error(self, exc: PermissionError, args) -> None:
         # The most common real-world cause: the previous report is still
         # open in Word/Notepad/Excel, which locks the file on Windows.
@@ -310,8 +374,10 @@ class App(tk.Tk):
 
         self.conference_report_path = None
         self.trial_signals_report_path = None
+        self.phase_transition_report_path = None
         self.conf_open_button.configure(state="disabled")
         self.trial_open_button.configure(state="disabled")
+        self.phase_open_button.configure(state="disabled")
 
     def open_conference_report(self) -> None:
         if self.conference_report_path and self.conference_report_path.exists():
@@ -320,6 +386,10 @@ class App(tk.Tk):
     def open_trial_signals_report(self) -> None:
         if self.trial_signals_report_path and self.trial_signals_report_path.exists():
             os.startfile(self.trial_signals_report_path)  # Windows-only — matches this app's target platform
+
+    def open_phase_transition_report(self) -> None:
+        if self.phase_transition_report_path and self.phase_transition_report_path.exists():
+            os.startfile(self.phase_transition_report_path)  # Windows-only — matches this app's target platform
 
 
 if __name__ == "__main__":
