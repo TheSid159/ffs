@@ -18,7 +18,10 @@ cd /d %~dp0
 set ANTHROPIC_API_KEY=PUT_YOUR_ANTHROPIC_KEY_HERE
 set HUNTER_API_KEY=PUT_YOUR_HUNTER_KEY_HERE
 
-python bd_agent.py --conference "ASCO GU" --year 2025 --sender-name "Dr. Darren Brennan" --sender-title "Medical Director"
+REM "py" (the Windows Python Launcher) is used instead of "python" — it's
+REM always on PATH after installing from python.org, even right after a
+REM fresh install/reinstall before you've logged off or restarted.
+py bd_agent.py --conference "ASCO GU" --year 2025 --sender-name "Dr. Darren Brennan" --sender-title "Medical Director"
 
 echo.
 echo ============================================================

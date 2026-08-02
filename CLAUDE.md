@@ -418,6 +418,17 @@ complete-looking report.
   "All Files", and this bit the user more than once (`run_windows.bat`,
   `seen_leads.py`). If a similar situation recurs, prefer pointing at a
   fresh full-repo download over incremental single-file patches.
+- Both `.bat` launchers call `py` (the Windows Python Launcher), not
+  `python`. `python.org`'s installer always places `py.exe` in
+  `C:\Windows` — which is already on `PATH` — regardless of whether "Add
+  python.exe to PATH" was checked, specifically to route around a real
+  gotcha hit in practice: installing/reinstalling Python updates `PATH` in
+  the registry, but `explorer.exe` (what actually launches a double-clicked
+  `.bat`) caches its own environment and won't see that update until the
+  user logs off/on or reboots — so a freshly-installed Python can work fine
+  from a brand-new terminal while `run_gui.bat` still fails with Windows'
+  "Python was not found... Microsoft Store" message. `py` sidesteps the
+  whole class of problem instead of asking the user to reboot.
 
 ## Generated output is not tracked
 
