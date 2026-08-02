@@ -88,6 +88,25 @@ eleven signals hunted at named conferences.
   file per search, created automatically next to the report) so re-running
   doesn't resurface the same leads every time.
 
+### Optional: push drafts to an outbox mailbox
+
+Fill in the **Outbox** fields (GUI) or `--outbox-email`/`--outbox-app-password`/
+`--outbox-imap-host` (CLI) and every new lead also gets a real, **unsent**
+draft email created directly in that mailbox's Drafts folder — useful if
+that mailbox is connected to HubSpot (or another CRM) for logging. This
+still doesn't send anything: a human opens the draft and hits send
+themselves, same as reviewing the Markdown report. The "To:" field is only
+filled in when Hunter confirmed a contact email; otherwise it's left blank
+for you to fill in. Leave the Outbox fields blank to skip this entirely —
+nothing changes from before.
+
+You'll need: the mailbox address, an app password for it (not your regular
+login password — check your email provider's settings for "app password"
+or "app-specific password"), and its IMAP server address (e.g.
+`imap.gmail.com` for Google Workspace/Gmail, `outlook.office365.com` for
+Microsoft 365/Outlook). Gmail accounts also need the Drafts folder name
+changed to `[Gmail]/Drafts`.
+
 ## Setup
 
 1. Get an Anthropic API key from https://console.anthropic.com (Settings →

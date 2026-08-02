@@ -29,6 +29,7 @@ import tkinter as tk
 from tkinter import messagebox, scrolledtext, ttk
 
 import conference_dates
+from bd_agent import validate_outbox_args
 from gui_logic import (
     CONFERENCE_DATES_CACHE_PATH,
     QueueWriter,
@@ -89,13 +90,36 @@ class App(tk.Tk):
         keys_frame = ttk.LabelFrame(self, text="API Keys (saved locally, entered once)")
         keys_frame.pack(fill="x", **pad)
 
-        ttk.Label(keys_frame, text="Anthropic API Key (Conference search only):").grid(row=0, column=0, sticky="w", **pad)
+        ttk.Label(keys_frame, text="Anthropic API Key (Conferences + Phase Transitions searches):").grid(row=0, column=0, sticky="w", **pad)
         self.anthropic_key_var = tk.StringVar(value=self.config_data.get("anthropic_api_key", ""))
         ttk.Entry(keys_frame, textvariable=self.anthropic_key_var, show="*", width=60).grid(row=0, column=1, **pad)
 
-        ttk.Label(keys_frame, text="Hunter.io API Key (optional, both searches):").grid(row=1, column=0, sticky="w", **pad)
+        ttk.Label(keys_frame, text="Hunter.io API Key (optional, all searches):").grid(row=1, column=0, sticky="w", **pad)
         self.hunter_key_var = tk.StringVar(value=self.config_data.get("hunter_api_key", ""))
         ttk.Entry(keys_frame, textvariable=self.hunter_key_var, show="*", width=60).grid(row=1, column=1, **pad)
+
+        outbox_frame = ttk.LabelFrame(
+            self, text="Outbox (optional — creates real, unsent draft emails in this mailbox instead of just the report)"
+        )
+        outbox_frame.pack(fill="x", **pad)
+
+        ttk.Label(outbox_frame, text="Outbox email address:").grid(row=0, column=0, sticky="w", **pad)
+        self.outbox_email_var = tk.StringVar(value=self.config_data.get("outbox_email", ""))
+        ttk.Entry(outbox_frame, textvariable=self.outbox_email_var, width=60).grid(row=0, column=1, **pad)
+
+        ttk.Label(outbox_frame, text="Outbox app password:").grid(row=1, column=0, sticky="w", **pad)
+        self.outbox_app_password_var = tk.StringVar(value=self.config_data.get("outbox_app_password", ""))
+        ttk.Entry(outbox_frame, textvariable=self.outbox_app_password_var, show="*", width=60).grid(row=1, column=1, **pad)
+
+        ttk.Label(outbox_frame, text="Outbox IMAP host (e.g. imap.gmail.com):").grid(row=2, column=0, sticky="w", **pad)
+        self.outbox_imap_host_var = tk.StringVar(value=self.config_data.get("outbox_imap_host", ""))
+        ttk.Entry(outbox_frame, textvariable=self.outbox_imap_host_var, width=60).grid(row=2, column=1, **pad)
+
+        ttk.Label(outbox_frame, text='Outbox Drafts folder name (default "Drafts", Gmail needs "[Gmail]/Drafts"):').grid(
+            row=3, column=0, sticky="w", **pad
+        )
+        self.outbox_drafts_folder_var = tk.StringVar(value=self.config_data.get("outbox_drafts_folder", "Drafts"))
+        ttk.Entry(outbox_frame, textvariable=self.outbox_drafts_folder_var, width=60).grid(row=3, column=1, **pad)
 
         params_frame = ttk.LabelFrame(self, text="Search parameters")
         params_frame.pack(fill="x", **pad)
@@ -200,6 +224,10 @@ class App(tk.Tk):
         form = {key: var.get() for key, var in self.field_vars.items()}
         form["anthropic_api_key"] = self.anthropic_key_var.get()
         form["hunter_api_key"] = self.hunter_key_var.get()
+        form["outbox_email"] = self.outbox_email_var.get()
+        form["outbox_app_password"] = self.outbox_app_password_var.get()
+        form["outbox_imap_host"] = self.outbox_imap_host_var.get()
+        form["outbox_drafts_folder"] = self.outbox_drafts_folder_var.get()
         return form
 
     def _save_form(self, form: dict) -> None:
@@ -210,6 +238,18 @@ class App(tk.Tk):
         self.log_text.configure(state="normal")
         self.log_text.delete("1.0", "end")
         self.log_text.configure(state="disabled")
+
+    def _outbox_ok(self, args) -> bool:
+        """Shared by all three on_run_* handlers below — checks the outbox
+        fields are either fully filled in or fully blank before starting a
+        background search, so an incomplete outbox config fails fast with a
+        clear dialog instead of partway through pushing drafts for a whole
+        report."""
+        error = validate_outbox_args(args)
+        if error:
+            messagebox.showerror("Outbox not fully configured", error)
+            return False
+        return True
 
     def on_run_conferences(self) -> None:
         form = self._current_form()
@@ -222,6 +262,8 @@ class App(tk.Tk):
             args = build_conference_args(form)
         except ValueError:
             messagebox.showerror("Invalid input", "Year(s) and Hunter min confidence must be numbers.")
+            return
+        if not self._outbox_ok(args):
             return
 
         os.environ["ANTHROPIC_API_KEY"] = form["anthropic_api_key"].strip()
@@ -260,6 +302,8 @@ class App(tk.Tk):
         except ValueError:
             messagebox.showerror("Invalid input", "Hunter min confidence must be a number.")
             return
+        if not self._outbox_ok(args):
+            return
 
         self._set_run_buttons_state("disabled")
         self.trial_open_button.configure(state="disabled")
@@ -295,6 +339,8 @@ class App(tk.Tk):
             args = build_phase_transition_args(form)
         except ValueError:
             messagebox.showerror("Invalid input", "Search window (days) and Hunter min confidence must be numbers.")
+            return
+        if not self._outbox_ok(args):
             return
 
         os.environ["ANTHROPIC_API_KEY"] = form["anthropic_api_key"].strip()

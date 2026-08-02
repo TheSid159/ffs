@@ -45,6 +45,7 @@ import anthropic
 
 import clinicaltrials_gov
 import conferences
+import email_drafts
 import hunter_contacts
 import pr_wire_feeds
 import sec_edgar
@@ -1149,6 +1150,36 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show every lead this run, even ones already recorded in --seen-file, and don't update it.",
     )
+    common.add_argument(
+        "--outbox-email",
+        default=os.environ.get("OUTBOX_EMAIL"),
+        help="Mailbox address to create real, unsent draft emails in (env: OUTBOX_EMAIL). Optional — "
+        "omit to skip entirely (nothing is created, same as today). Never sends anything; only "
+        "creates drafts in that mailbox's Drafts folder for a human to review and send.",
+    )
+    common.add_argument(
+        "--outbox-app-password",
+        default=os.environ.get("OUTBOX_APP_PASSWORD"),
+        help="App password for --outbox-email (env: OUTBOX_APP_PASSWORD). Required if --outbox-email is set.",
+    )
+    common.add_argument(
+        "--outbox-imap-host",
+        default=os.environ.get("OUTBOX_IMAP_HOST"),
+        help="IMAP server for --outbox-email, e.g. imap.gmail.com (Google Workspace/Gmail) or "
+        "outlook.office365.com (Microsoft 365/Outlook). Required if --outbox-email is set.",
+    )
+    common.add_argument(
+        "--outbox-imap-port",
+        type=int,
+        default=993,
+        help="IMAP port for --outbox-email (default: 993, the standard IMAPS port — almost never needs changing).",
+    )
+    common.add_argument(
+        "--outbox-drafts-folder",
+        default=os.environ.get("OUTBOX_DRAFTS_FOLDER", "Drafts"),
+        help='IMAP folder name to create drafts in (default: "Drafts"). Gmail accounts typically need '
+        '"[Gmail]/Drafts" instead — check your account if drafts don\'t show up where expected.',
+    )
 
     conf_parser = subparsers.add_parser(
         "conferences",
@@ -1297,6 +1328,17 @@ def _finalize_and_write(
             file=sys.stderr,
         )
 
+    if args.outbox_email:
+        print(f"\nCreating draft emails in {args.outbox_email}...", file=sys.stderr)
+        successes, draft_failures = email_drafts.push_drafts_for_report(enriched, args, draft_email)
+        print(f"[{successes} draft(s) created in {args.outbox_email} — sitting unsent, review before sending]", file=sys.stderr)
+        if draft_failures:
+            print(
+                f"[Warning: {len(draft_failures)} draft(s) FAILED to create — "
+                f"first error: {draft_failures[0][1]}]",
+                file=sys.stderr,
+            )
+
     report = render_report(
         preamble,
         enriched,
@@ -1353,9 +1395,34 @@ def _run_phase_transitions_cli(args: argparse.Namespace) -> None:
     _finalize_and_write(preamble, leads, excluded, args, raw_response=raw_response, known_leads=known_leads)
 
 
+def validate_outbox_args(args: argparse.Namespace) -> Optional[str]:
+    """Return an error message if --outbox-email is set but the other
+    required IMAP details aren't, so the caller can fail fast and clearly
+    rather than discovering it partway through pushing drafts for a whole
+    report. Returns None if outbox drafts aren't configured at all, or are
+    configured completely."""
+    if not args.outbox_email:
+        return None
+    missing = [
+        flag
+        for flag, val in (
+            ("--outbox-app-password", args.outbox_app_password),
+            ("--outbox-imap-host", args.outbox_imap_host),
+        )
+        if not val
+    ]
+    if missing:
+        return f"--outbox-email is set but {', '.join(missing)} is missing — both are required to create drafts."
+    return None
+
+
 def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
+
+    outbox_error = validate_outbox_args(args)
+    if outbox_error:
+        parser.error(outbox_error)
 
     if args.command == "conferences":
         _run_conferences_cli(args)

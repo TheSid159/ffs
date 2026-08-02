@@ -731,6 +731,63 @@ line for three companies. If a paid-plan user ever needs more candidates
 per domain to pick the best CEO/CMO match from, this would need to become
 a configurable value rather than a hardcoded 10, not just bumped back up.
 
+### Outbox drafts (optional, all three searches)
+
+`agent/email_drafts.py` is an opt-in extra step, run at the end of
+`_finalize_and_write()` (both `bd_agent.py`'s and `gui_logic.py`'s copies)
+right after Hunter enrichment, right before rendering the report: if
+`--outbox-email` (CLI) / the GUI's "Outbox" fields are filled in, it
+creates one real, **unsent** draft email per new lead directly in that
+mailbox's Drafts folder via IMAP (stdlib `imaplib`/`email`, no new
+dependency) — added at the user's request to push drafts into a mailbox
+connected to HubSpot for logging/tracking, while explicitly stopping short
+of actually sending ("can you send them so they sit unsent in that
+outbox?" — the user's own words). This does **not** change the tool's core
+"never sends anything" design (see "The script never sends anything" in
+the README) — a draft sitting in an outbox still requires a human to open
+it and hit send.
+
+Key decisions:
+
+- **IMAP, not a provider-specific API.** IMAP APPEND to the Drafts folder
+  with a username + app password works across Gmail, Microsoft 365/
+  Outlook, and most generic providers, without needing OAuth setup or a
+  provider-specific SDK — important since the user wasn't sure which
+  platform hosts `imogene@elevateimaging.ai` at the time this was built
+  (still true as of this writing; see below).
+- **The "To:" field is only ever set from a Hunter-confirmed contact
+  email** (`contact.email`) — never a guessed or unconfirmed address, the
+  same anti-fabrication discipline as everywhere else in this tool. A
+  lead without a confirmed contact still gets a draft (subject/body ready
+  to go), just with no recipient filled in — a human fills it in before
+  sending, the same way they'd fill in any other missing piece of a draft.
+- **Entirely optional and validated up front.** `validate_outbox_args()`
+  (in `bd_agent.py`, imported directly by `gui.py` so both surfaces share
+  one check) fails fast with a clear error if `--outbox-email` is set but
+  `--outbox-app-password`/`--outbox-imap-host` aren't — before any Hunter
+  lookups or report writing happens, not partway through pushing drafts
+  for a whole report. If `--outbox-email` is never set at all, nothing
+  outbox-related runs — zero behavior change from before this feature
+  existed.
+- **Only for new leads.** `push_drafts_for_report()` is called with
+  `enriched` (post-dedup — repeats already filtered out by
+  `seen_leads.split_new_and_repeats()`), so re-running a search doesn't
+  create duplicate drafts for leads already drafted in a previous run.
+  **Credentials are collected the same way as the Anthropic/Hunter keys** —
+  a masked GUI field (`gui_config.json`, gitignored) or `--outbox-app-password`/
+  `OUTBOX_APP_PASSWORD` env var for the CLI — never something to paste into
+  chat.
+
+**Not yet verified against a live mailbox** — as of this writing the user
+hadn't confirmed which platform hosts `imogene@elevateimaging.ai` (Google
+Workspace, Microsoft 365, or something else), so this was built and tested
+entirely with `unittest.mock.patch` on `email_drafts.imaplib.IMAP4_SSL`.
+Once the platform is known: Gmail needs `imap.gmail.com` + an App Password
+(requires 2-Step Verification) + Drafts folder `"[Gmail]/Drafts"`; Microsoft
+365/Outlook needs `outlook.office365.com` + an app password + Drafts folder
+`"Drafts"` (the default). A real run should be checked once before relying
+on it, same as every other new source added this session.
+
 ### `dict.get(key, default)` is not None-safe
 
 `.get(key, default)` only substitutes `default` when `key` is **absent** —
@@ -770,6 +827,10 @@ complete-looking report.
 
 ### Known gaps (not yet implemented)
 
+- `email_drafts.py`'s outbox-drafts feature (see its own section above)
+  hasn't been confirmed against a real mailbox yet — the user hadn't
+  determined which platform hosts `imogene@elevateimaging.ai` as of this
+  writing. Built and tested with `unittest.mock.patch` on `imaplib.IMAP4_SSL`.
 - Paid biotech intelligence databases (BioPharmCatalyst, AlphaSense,
   Citeline/Trialtrove) were explicitly excluded from the trial-signals
   search per the user's instruction — free/deterministic sources only.

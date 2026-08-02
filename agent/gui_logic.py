@@ -10,6 +10,7 @@ from pathlib import Path
 
 import bd_agent
 import conference_dates
+import email_drafts
 import seen_leads
 
 
@@ -76,6 +77,20 @@ class QueueWriter:
         pass
 
 
+def _outbox_fields(form: dict) -> dict:
+    """Shared outbox-drafts fields, read the same way by all three
+    build_*_args() functions below — one shared set of GUI fields applies
+    to whichever search is run, mirroring how sender_name/hunter_api_key
+    etc. are already shared."""
+    return dict(
+        outbox_email=form.get("outbox_email", "").strip() or None,
+        outbox_app_password=form.get("outbox_app_password", "").strip() or None,
+        outbox_imap_host=form.get("outbox_imap_host", "").strip() or None,
+        outbox_imap_port=993,
+        outbox_drafts_folder=form.get("outbox_drafts_folder", "").strip() or "Drafts",
+    )
+
+
 def build_conference_args(form: dict) -> argparse.Namespace:
     """Build the Namespace for the conference search (bd_agent.run_research()
     and friends) from a plain dict of GUI form values. Raises ValueError on
@@ -110,6 +125,7 @@ def build_conference_args(form: dict) -> argparse.Namespace:
         hunter_delay_ms=4000,
         seen_file=str(app_dir() / "seen_leads.json"),
         no_dedup=False,
+        **_outbox_fields(form),
     )
 
 
@@ -141,6 +157,7 @@ def build_trial_signals_args(form: dict) -> argparse.Namespace:
         no_ctgov=False,
         no_secedgar=False,
         no_prwire=False,
+        **_outbox_fields(form),
     )
 
 
@@ -175,6 +192,7 @@ def build_phase_transition_args(form: dict) -> argparse.Namespace:
         # regardless of which search triggers the check.
         sponsor_history_file=str(app_dir() / "sponsor_phase_history.json"),
         no_dedup=False,
+        **_outbox_fields(form),
     )
 
 
@@ -229,6 +247,13 @@ def _finalize_and_write(
             f"\n[Warning: Hunter.io lookup FAILED for {len(failed)} of {len(new_leads)} "
             f"companies. First error: {failed[0][1].source}]"
         )
+
+    if args.outbox_email:
+        print(f"\nCreating draft emails in {args.outbox_email}...")
+        successes, draft_failures = email_drafts.push_drafts_for_report(enriched, args, bd_agent.draft_email)
+        print(f"[{successes} draft(s) created in {args.outbox_email} — sitting unsent, review before sending]")
+        if draft_failures:
+            print(f"\n[Warning: {len(draft_failures)} draft(s) FAILED to create — first error: {draft_failures[0][1]}]")
 
     report = bd_agent.render_report(
         preamble,
