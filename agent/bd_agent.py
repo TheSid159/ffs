@@ -310,7 +310,7 @@ def run_research(args: argparse.Namespace) -> str:
                 {
                     "type": "web_search_20260209",
                     "name": "web_search",
-                    "max_uses": 30,
+                    "max_uses": 90,
                 }
             ],
             messages=[{"role": "user", "content": prompt}],

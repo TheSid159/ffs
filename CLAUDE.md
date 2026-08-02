@@ -69,7 +69,10 @@ Six modules, no application framework:
      that's a separate, more reliable step now.
   2. `run_research()` sends that prompt to `claude-opus-5` via
      `client.messages.stream(...)` with the server-side
-     `web_search_20260209` tool (`max_uses=30`), streaming text to stdout
+     `web_search_20260209` tool (`max_uses=90` — raised from the original 30,
+     which was sized for the single original signal type and ran out
+     routinely once the prompt grew to eleven signal categories),
+     streaming text to stdout
      for progress visibility.
   3. `parse_research_output()` extracts the trailing JSON block via regex
      (`JSON_FENCE_RE`) into `(preamble, leads, excluded)`. If parsing
