@@ -384,10 +384,12 @@ there is no `raw_response` to fall back to if something goes wrong — see
   `_source.form`, `_source.file_date`, `_source.adsh`) and the filing URL
   construction (`.../Archives/edgar/data/{cik}/{accession_no_no_dashes}/{adsh}-index.htm`)
   are confirmed from the API's OpenAPI spec and a real example response
-  found via web search, not guessed — but like `clinicaltrials_gov.py`,
-  never verified against a live call from this dev sandbox (network
-  policy blocks `efts.sec.gov` too); tested with `unittest.mock.patch` on
-  `sec_edgar._get()`.
+  found via web search, not guessed. This dev sandbox itself can't reach
+  `efts.sec.gov` (network policy blocks it, like `clinicaltrials.gov`), so
+  it was built and tested here with `unittest.mock.patch` on
+  `sec_edgar._get()` — but **the user has since confirmed a real run finds
+  actual leads** (2 filings matched on the first live try), so this one's
+  proven working, not just plausible.
 
 - **`agent/pr_wire_feeds.py`** — RSS/Atom monitoring of PR Newswire /
   Business Wire / GlobeNewswire (free, no API key, stdlib
@@ -403,18 +405,32 @@ there is no `raw_response` to fall back to if something goes wrong — see
   the report always shows the full headline too so a bad guess never
   hides the real name.
 
-  **`DEFAULT_FEED_URLS` is the weakest-verified part of this entire
-  session's work and is flagged as such in the module's own docstring**:
-  this dev sandbox's network policy blocks all three wire services'
-  domains outright, and their feed-listing pages returned 403s to
-  automated fetches too, so these three URLs were found via web search of
-  each service's documented feed-URL *pattern* (not fabricated from
-  nothing), never confirmed with a live 200 response containing real
-  entries. Because of that lower confidence, `find_leads()` prints a
-  warning per feed that fails to fetch/parse instead of failing silently
-  the way `clinicaltrials_gov.py`/`sec_edgar.py` do — if every run logs a
-  warning for one of these feeds, that's the first thing to check/fix by
-  editing `DEFAULT_FEED_URLS` directly.
+  `DEFAULT_FEED_URLS` was the weakest-verified part of this whole session's
+  work (this dev sandbox's network policy blocks all three wire services'
+  domains outright, so none could be fetched live from here) — one entry
+  turned out wrong in practice and has since been fixed with the user's
+  help: the original GlobeNewswire URL used the `JSWidgetFeed` path, which
+  is actually a JavaScript embed snippet (`<script>GetWidget(...)</script>`),
+  not a feed at all — it returned HTML/JS that failed XML parsing
+  (`not well-formed (invalid token)`). A real user run surfaced this
+  immediately via `find_leads()`'s per-feed warning (deliberately NOT
+  silent here, unlike `clinicaltrials_gov.py`/`sec_edgar.py`, precisely
+  because these URLs started out less trustworthy than a documented API),
+  and the user then confirmed the correct pattern by fetching
+  `https://www.globenewswire.com/rss/list` and testing candidate URLs
+  directly: GlobeNewswire's real feed path is `RssFeed`, not `JSWidgetFeed`
+  — e.g. `.../RssFeed/industry/4573-Biotechnology/feedTitle/...` — now the
+  current `DEFAULT_FEED_URLS` entry, confirmed against multiple live 200
+  responses with real RSS 2.0 content (also tested and confirmed working:
+  `4577-Pharmaceuticals` and `4535-Medical%20Equipment`, not used by
+  default since they're a looser fit for an oncology/urology imaging CRO).
+  PR Newswire's and Business Wire's URLs have not thrown a parse warning in
+  the user's runs so far, which is reasonable evidence they're fetching
+  real feeds too, though genuine relevant hits from either haven't been
+  confirmed yet the way GlobeNewswire's and SEC EDGAR's have. If a feed
+  ever 404s or comes back empty on every run, that's still the first thing
+  to check — fix by editing `DEFAULT_FEED_URLS` directly, following the
+  `RssFeed`-not-`JSWidgetFeed` lesson above.
 
   This was scoped down from a larger proposal (ClinicalTrials.gov API +
   SEC EDGAR 8-K/10-Q filings + PR Newswire/Business Wire/GlobeNewswire RSS

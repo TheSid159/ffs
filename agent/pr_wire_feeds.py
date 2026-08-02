@@ -8,18 +8,19 @@ literally contains "phase 1" plus either "topline" or "phase 2", alongside
 the target indication — the same anti-fabrication posture as
 clinicaltrials_gov.py and sec_edgar.py.
 
-IMPORTANT — the three DEFAULT_FEED_URLS below could not be verified with a
-live fetch: this dev sandbox's network policy blocks all three wire
-services' domains outright (same restriction hit throughout this session),
-and their own feed-listing pages returned 403s to automated fetches too. Each
-URL was found via web search of the services' own documented feed-URL
-patterns (not guessed from scratch), but "found via search" is weaker
-evidence than a live 200 response with real entries. If a feed 404s or
-comes back empty on every run, that's the first thing to check — see
-`find_leads()`'s per-feed warning, which is deliberately NOT silent here
-(unlike clinicaltrials_gov.py's error handling) precisely because these
-URLs are less trustworthy than a documented API. Edit DEFAULT_FEED_URLS
-directly if a service changes its feed URLs.
+DEFAULT_FEED_URLS below were built from a dev sandbox that cannot reach any
+of these three domains directly (network policy blocks them outright), so
+none could be tested with a live fetch here — see git history/CLAUDE.md for
+which ones a real run has since confirmed (GlobeNewswire's was originally
+guessed wrong — `JSWidgetFeed` turned out to be a JavaScript embed snippet,
+not a feed at all, returning HTML/JS that failed XML parsing; the real
+pattern is `RssFeed`, confirmed against a live 200 response with real RSS
+2.0 content). If a feed 404s or comes back empty on every run, that's the
+first thing to check — see `find_leads()`'s per-feed warning, which is
+deliberately NOT silent here (unlike clinicaltrials_gov.py's error
+handling) precisely because these URLs are less trustworthy than a
+documented API. Edit DEFAULT_FEED_URLS directly if a service changes its
+feed URLs.
 """
 
 import datetime as dt
@@ -32,11 +33,13 @@ import xml.etree.ElementTree as ET
 
 REQUEST_TIMEOUT_SECONDS = 20
 
-# Best-effort, not verified live — see module docstring.
 DEFAULT_FEED_URLS = [
     "https://www.prnewswire.com/rss/health-latest-news/biotechnology-list.rss",
     "https://feed.businesswire.com/rss/home/?rss=G1QFDERJXkpaGVlYXg==",
-    "https://www.globenewswire.com/JSWidgetFeed/industry/4573-Biotechnology/feedTitle/GlobeNewswire%20-%20Industry%20News%20on%20Biotechnology",
+    # Confirmed against a live fetch (real RSS 2.0 content, e.g. Tiziana's
+    # PET-imaging Phase 2 trial update, INmune Bio's late-stage biotech
+    # update) — see module docstring.
+    "https://www.globenewswire.com/RssFeed/industry/4573-Biotechnology/feedTitle/GlobeNewswire%20-%20Industry%20News%20on%20Biotechnology",
 ]
 
 ATOM_NS = "{http://www.w3.org/2005/Atom}"
