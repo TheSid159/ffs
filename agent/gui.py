@@ -39,7 +39,7 @@ class App(tk.Tk):
         ("sender_title", "Your title:", "Medical Director", 40),
         ("sender_company", "Company:", "Elevate Imaging", 40),
         ("hunter_min_confidence", "Hunter min confidence (0-100):", "90", 10),
-        ("output", "Output file:", "leads_report.md", 40),
+        ("output", "Output file (blank = auto-name from search below):", "", 40),
     ]
 
     def __init__(self):

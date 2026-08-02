@@ -87,16 +87,24 @@ def build_args(form: dict) -> argparse.Namespace:
     conference = [c.strip() for c in form.get("conference", "").split(",") if c.strip()] or ["ASCO GU"]
     year = [int(y) for y in form.get("year", "").split()] or [2025, 2026]
     hunter_min_confidence = int(form.get("hunter_min_confidence", "").strip() or 90)
+    indication = form.get("indication", "").strip() or "bladder cancer"
+
+    # Leaving the Output file field blank auto-names the report from the
+    # search parameters (e.g. "bladder_cancer_ASCO_GU_2025_2026_leads_report.md")
+    # instead of always overwriting the same generic "leads_report.md" —
+    # typing an exact filename still overrides this.
+    output_field = form.get("output", "").strip()
+    output = output_field or str(app_dir() / (bd_agent.default_output_basename(indication, conference, year) + ".md"))
 
     return argparse.Namespace(
         conference=conference,
         year=year,
-        indication=form.get("indication", "").strip() or "bladder cancer",
+        indication=indication,
         phase=form.get("phase", "").strip() or "Phase II",
         sender_name=form.get("sender_name", "").strip() or "[Your Name]",
         sender_title=form.get("sender_title", "").strip() or "[Your Title]",
         sender_company=form.get("sender_company", "").strip() or "Elevate Imaging",
-        output=form.get("output", "").strip() or str(app_dir() / "leads_report.md"),
+        output=output,
         hunter_api_key=form.get("hunter_api_key", "").strip() or None,
         hunter_min_confidence=hunter_min_confidence,
         hunter_delay_ms=4000,

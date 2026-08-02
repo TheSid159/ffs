@@ -89,9 +89,15 @@ python bd_agent.py \
   --sender-name "Dr. Darren Brennan" \
   --sender-title "Medical Director" \
   --sender-company "Elevate Imaging" \
-  --hunter-min-confidence 90 \
-  --output leads_report.md
+  --hunter-min-confidence 90
 ```
+
+`--output` is optional — leave it out and the report/CSV are named from your
+search parameters (e.g. `bladder_cancer_ASCO_GU_ASCO_ESMO_AUA_2025_2026_leads_report.md`),
+so re-running with different parameters won't silently overwrite an
+unrelated earlier report. Pass `--output some_name.md` to pick your own name
+instead. Same behavior in the GUI — leave the "Output file" field blank to
+auto-name.
 
 On Windows, `run_windows.bat.example` is a template for a double-clickable
 version of this same command (copy to `run_windows.bat`, fill in your keys

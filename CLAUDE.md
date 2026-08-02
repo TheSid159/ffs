@@ -180,6 +180,23 @@ and a leadership-change lead) would both fall back to the same
 `company_name|` key and the second would be wrongly treated as a repeat of
 the first.
 
+### Auto-named output files
+
+`bd_agent.default_output_basename(indication, conference, year)` builds a
+descriptive default filename (e.g.
+`bladder_cancer_ASCO_GU_2025_2026_leads_report`) instead of the old fixed
+`leads_report.md` — re-running with different search parameters no longer
+silently overwrites an unrelated earlier report, and it's the direct fix
+for the real "Permission denied: leads_report.md" case (the file locked
+because a previous same-named report was still open elsewhere) as much as
+the friendlier error message is. `--output`/the GUI's Output file field
+still lets the user pick an exact name when they want one; the auto-name
+only kicks in when it's left unset (CLI) or blank (GUI — the field's
+default value is `""`, not a placeholder string, specifically so this
+triggers on first launch too). `render_csv()`'s output filename is derived
+from the same path (`out_path.with_suffix(".csv")`), so it inherits the
+descriptive name for free.
+
 ### CSV export
 
 `render_csv()` writes the same leads as `render_report()`'s Markdown, one

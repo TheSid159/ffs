@@ -63,6 +63,28 @@ def _estimate_run_cost(usage) -> tuple:
     return total, search_requests
 
 
+FILENAME_UNSAFE_RE = re.compile(r'[<>:"/\\|?*]')
+
+
+def _sanitize_filename_part(text: str) -> str:
+    """Make a string safe to use inside a filename on Windows (the target
+    platform) as well as macOS/Linux — spaces become underscores and
+    characters Windows forbids in filenames are stripped."""
+    return FILENAME_UNSAFE_RE.sub("", text.strip().replace(" ", "_"))
+
+
+def default_output_basename(indication: str, conference: list, year: list) -> str:
+    """Build a descriptive default output filename (no extension) from the
+    search parameters, e.g. "bladder_cancer_ASCO_GU_2025_2026_leads_report"
+    — so re-running with different parameters doesn't silently overwrite an
+    unrelated earlier report under the same generic "leads_report" name."""
+    indication_part = _sanitize_filename_part(indication) or "leads"
+    conference_part = "_".join(_sanitize_filename_part(c) for c in conference)
+    year_part = "_".join(str(y) for y in year)
+    parts = [p for p in (indication_part, conference_part, year_part) if p]
+    return "_".join(parts) + "_leads_report"
+
+
 def build_prompt(args: argparse.Namespace) -> str:
     conference_list = " and ".join(args.conference)
     years = ", ".join(str(y) for y in args.year)
@@ -754,7 +776,13 @@ def main() -> None:
     parser.add_argument("--sender-name", default="[Your Name]", help="Your name for the draft emails")
     parser.add_argument("--sender-title", default="[Your Title]", help="Your title for the draft emails")
     parser.add_argument("--sender-company", default="Elevate Imaging", help="Your CRO's name for the draft emails")
-    parser.add_argument("--output", "-o", default="leads_report.md", help="Output markdown file path")
+    parser.add_argument(
+        "--output",
+        "-o",
+        default=None,
+        help="Output markdown file path (default: auto-named from --indication/--conference/--year, "
+        'e.g. "bladder_cancer_ASCO_GU_2025_2026_leads_report.md")',
+    )
     parser.add_argument(
         "--hunter-api-key",
         default=os.environ.get("HUNTER_API_KEY"),
@@ -785,6 +813,8 @@ def main() -> None:
         help="Show every lead this run, even ones already recorded in --seen-file, and don't update it.",
     )
     args = parser.parse_args()
+    if not args.output:
+        args.output = default_output_basename(args.indication, args.conference, args.year) + ".md"
 
     raw_response = run_research(args)
     preamble, leads, excluded = parse_research_output(raw_response)
