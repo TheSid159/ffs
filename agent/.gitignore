@@ -4,8 +4,14 @@ __pycache__/
 run*.log
 leads_report*.md
 leads_report*.csv
+*_leads_report.md
+*_leads_report.csv
+*_trial_signals_report.md
+*_trial_signals_report.csv
 run_windows.bat
 seen_leads.json
+trial_signals_seen_leads.json
+sponsor_phase_history.json
 gui_config.json
 conference_dates_cache.json
 build/

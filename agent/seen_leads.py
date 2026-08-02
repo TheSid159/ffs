@@ -39,8 +39,13 @@ def dedup_key(lead: dict) -> str:
             return f"{signal_type}|{domain}|{trial_name}"
         return f"{signal_type}|{company_name}|{trial_name}"
 
-    if signal_type in ("new_registration", "trial_milestone_approaching", "trial_recently_completed"):
-        # The latter two are ClinicalTrials.gov-sourced (see clinicaltrials_gov.py)
+    if signal_type in (
+        "new_registration",
+        "trial_milestone_approaching",
+        "trial_recently_completed",
+        "phase2_filing_by_returning_sponsor",
+    ):
+        # These are all ClinicalTrials.gov-sourced (see clinicaltrials_gov.py)
         # and always carry a real NCT number as registry_id — a far more stable
         # key than the free-text detail fallback below, which embeds a
         # completion-date estimate that could shift slightly between runs.
@@ -49,10 +54,17 @@ def dedup_key(lead: dict) -> str:
             return f"{signal_type}|{domain}|{registry_id}"
         return f"{signal_type}|{company_name}|{registry_id}"
 
+    if signal_type == "sec_filing_signal":
+        # registry_id is the filing's SEC accession number (adsh) — a stable
+        # per-document ID, unlike the free-text detail fallback below.
+        registry_id = (lead.get("registry_id") or "").strip().lower()
+        return f"{signal_type}|{company_name}|{registry_id}"
+
     # Every other signal type (funding, leadership_change, conference_highlight,
     # regulatory_designation, regulatory_milestone, trial_expansion,
-    # protocol_amendment, hiring_signal, vendor_switch_signal): no natural
-    # unique ID, so key on the free-text detail too — same variability
+    # protocol_amendment, hiring_signal, vendor_switch_signal, and
+    # press_release_signal — RSS entries have no registry ID either): no
+    # natural unique ID, so key on the free-text detail too — same variability
     # caveat as company_name/trial_name above applies (Claude may rephrase
     # between runs), but colliding two different signals at one company is
     # worse.

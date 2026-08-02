@@ -2,21 +2,32 @@
 """
 Business development lead-finder for an imaging CRO.
 
-Searches recent conference presentations for trials matching a given phase,
-indication, and result criteria, using Claude with web search. Claude
-returns structured lead data (company, trial, abstract link); this script
-then looks up a verified CEO/CMO contact via Hunter.io (gated on a minimum
-confidence score, so a low-confidence guess is never reported as confirmed)
-and renders a preliminary outreach email per lead from a fixed template.
+Two independent subcommands (see CLAUDE.md for why they're split):
+
+- "conferences": searches recent conference presentations for trials
+  matching a given phase, indication, and result criteria, using Claude
+  with web search across 11 signal types. Costs real API usage.
+- "trial-signals": free, deterministic checks against ClinicalTrials.gov,
+  SEC EDGAR filings, and press-release RSS feeds — no LLM, no API cost, so
+  it can be run far more often than the conference search.
+
+Either subcommand's structured lead data is then looked up for a verified
+CEO/CMO contact via Hunter.io (gated on a minimum confidence score, so a
+low-confidence guess is never reported as confirmed) and rendered into a
+preliminary outreach email per lead from a fixed template.
 
 Usage:
     export ANTHROPIC_API_KEY=sk-ant-...
     export HUNTER_API_KEY=...          # optional — omit to skip contact lookup
-    python bd_agent.py --conference "ASCO GU" ASCO ESMO AUA --year 2025 2026 \
+
+    python bd_agent.py conferences --conference "ASCO GU" ASCO ESMO AUA --year 2025 2026 \
         --indication "bladder cancer" --phase "Phase II" \
         --sender-name "Dr. Darren Brennan" --sender-title "Medical Director" \
-        --sender-company "Elevate Imaging" \
-        --output leads_report.md
+        --sender-company "Elevate Imaging"
+
+    python bd_agent.py trial-signals --indication "bladder cancer" \
+        --sender-name "Dr. Darren Brennan" --sender-title "Medical Director" \
+        --sender-company "Elevate Imaging"
 """
 
 import argparse
@@ -35,6 +46,8 @@ import anthropic
 import clinicaltrials_gov
 import conferences
 import hunter_contacts
+import pr_wire_feeds
+import sec_edgar
 import seen_leads
 
 MODEL = "claude-opus-5"
@@ -84,6 +97,16 @@ def default_output_basename(indication: str, conference: list, year: list) -> st
     year_part = "_".join(str(y) for y in year)
     parts = [p for p in (indication_part, conference_part, year_part) if p]
     return "_".join(parts) + "_leads_report"
+
+
+def default_trial_signals_basename(indication: str) -> str:
+    """Default output filename (no extension) for a trial-signals search,
+    e.g. "bladder_cancer_trial_signals_report" — kept separate from
+    default_output_basename() (used by the conference search) so the two
+    independent searches never share a default filename and overwrite each
+    other's report."""
+    indication_part = _sanitize_filename_part(indication) or "leads"
+    return f"{indication_part}_trial_signals_report"
 
 
 def build_prompt(args: argparse.Namespace) -> str:
@@ -379,6 +402,40 @@ def parse_research_output(text: str):
     return preamble, data.get("leads") or [], data.get("excluded") or []
 
 
+def run_trial_signals_search(args: argparse.Namespace) -> list:
+    """Aggregate every free, deterministic (no-LLM) trial-signal lead:
+    ClinicalTrials.gov (3 signals — see clinicaltrials_gov.py), SEC EDGAR
+    8-K/10-Q filings, and press-release RSS feeds. This is the whole point
+    of splitting it from the conference search (run_research(), above): none
+    of these three sources costs API money or uses Claude at all, so this
+    can be run as often as wanted — daily, hourly — independent of the
+    conference search's cost. Each source is independently toggleable via
+    --no-ctgov/--no-secedgar/--no-prwire and fails independently: one
+    source being unreachable never loses leads from the other two.
+    """
+    leads = []
+
+    if not args.no_ctgov:
+        print("Checking ClinicalTrials.gov for trial milestones, completions, and returning-sponsor filings...", file=sys.stderr)
+        ctgov_leads = clinicaltrials_gov.find_leads(args.indication, Path(args.sponsor_history_file))
+        print(f"[Found {len(ctgov_leads)} lead(s) via ClinicalTrials.gov]", file=sys.stderr)
+        leads += ctgov_leads
+
+    if not args.no_secedgar:
+        print("Checking SEC EDGAR for Phase 1/Phase 2 transition language in recent 8-K/10-Q filings...", file=sys.stderr)
+        sec_leads = sec_edgar.find_leads(args.sender_company, args.sender_name)
+        print(f"[Found {len(sec_leads)} lead(s) via SEC EDGAR]", file=sys.stderr)
+        leads += sec_leads
+
+    if not args.no_prwire:
+        print("Checking PR Newswire/Business Wire/GlobeNewswire for Phase 1/Phase 2 press releases...", file=sys.stderr)
+        pr_leads = pr_wire_feeds.find_leads(args.indication)
+        print(f"[Found {len(pr_leads)} lead(s) via press-release feeds]", file=sys.stderr)
+        leads += pr_leads
+
+    return leads
+
+
 def enrich_contacts(leads: list, api_key: Optional[str], min_confidence: int, delay_seconds: float = 4.0):
     """Return [(lead, Contact | None)] — Contact is None if lookup was skipped.
 
@@ -438,6 +495,9 @@ SIGNAL_LABELS = {
     "vendor_switch_signal": "Vendor-Switch Signal",
     "trial_milestone_approaching": "Trial Milestone Approaching",
     "trial_recently_completed": "Trial Recently Completed",
+    "phase2_filing_by_returning_sponsor": "New Phase 2 Filing (Returning Sponsor)",
+    "sec_filing_signal": "SEC Filing Signal",
+    "press_release_signal": "Press Release Signal",
 }
 
 
@@ -531,6 +591,23 @@ def _opening_and_transition(lead: dict, args: argparse.Namespace) -> tuple:
         opening = f"I saw via ClinicalTrials.gov that {company}'s Phase 1 trial ({trial}) recently completed. Congratulations on reaching this milestone."
         transition = f"Given this, {intro} as you plan the next phase of development."
 
+    elif signal_type == "phase2_filing_by_returning_sponsor":
+        opening = (
+            f"I saw via ClinicalTrials.gov that {company} has registered a new Phase 2 trial, having previously "
+            f"run a Phase 1 trial in {args.indication}. Congratulations on advancing to this stage."
+        )
+        transition = f"Given this, {intro} as you plan imaging assessment for this next phase."
+
+    elif signal_type == "sec_filing_signal":
+        detail = lead.get("signal_detail") or "a recent SEC filing"
+        opening = f"I read {company}'s recent SEC filing — {detail}"
+        transition = f"Given this, {intro} as you plan your next stage of clinical development."
+
+    elif signal_type == "press_release_signal":
+        detail = lead.get("abstract_title") or "your recent press release"
+        opening = f'I saw the press release "{detail}."'
+        transition = f"Given this, {intro} as you plan your next stage of clinical development."
+
     else:  # "trial_result" — the hard-specified template, do not alter
         abstract_ref = f'"{lead.get("abstract_title") or lead.get("trial_name") or "your recent presentation"}"'
         if lead.get("abstract_number"):
@@ -583,17 +660,32 @@ def render_report(
     hunter_enabled: bool,
     repeat_leads: Optional[list] = None,
 ) -> str:
-    conference_list = " and ".join(args.conference)
-    years = ", ".join(str(y) for y in args.year)
+    # render_report() is shared by both the conference search (Claude web
+    # research) and the trial-signals search (ClinicalTrials.gov/SEC EDGAR/
+    # press-release RSS, no LLM) — they're separate, independently-run
+    # pipelines (see CLAUDE.md), so their args.Namespaces differ: only the
+    # conference search's has .conference/.year/.phase.
+    if hasattr(args, "conference"):
+        conference_list = " and ".join(args.conference)
+        years = ", ".join(str(y) for y in args.year)
+        scope_line = (
+            f"**Scope searched:** {conference_list} ({years}), {args.phase} — trial results, "
+            f"conference highlights, funding, leadership changes, new trial registrations, "
+            f"regulatory designations/milestones, trial expansions, protocol amendments, "
+            f"hiring signals, and vendor-switch signals."
+        )
+    else:
+        scope_line = (
+            "**Scope searched:** ClinicalTrials.gov (trial milestones approaching, recently "
+            "completed trials, new Phase 2 filings by returning sponsors), SEC EDGAR (8-K/10-Q "
+            "filings), and press-release RSS feeds — no LLM research involved, free and "
+            "deterministic, and independent of the conference search above."
+        )
 
     lines = [
         f"# {args.indication.title()} — BD Leads for {args.sender_company}",
         "",
-        f"**Scope searched:** {conference_list} ({years}), {args.phase} — trial results, "
-        f"conference highlights, funding, leadership changes, new trial registrations, "
-        f"regulatory designations/milestones, trial expansions, protocol amendments, "
-        f"hiring signals, and vendor-switch signals; plus a direct ClinicalTrials.gov "
-        f"check for Phase 1 trials nearing or past their primary completion date.",
+        scope_line,
         "",
     ]
     if preamble:
@@ -781,80 +873,126 @@ def render_csv(enriched_leads: list, args: argparse.Namespace) -> str:
     return buffer.getvalue()
 
 
-def main() -> None:
+def build_arg_parser() -> argparse.ArgumentParser:
+    """Two independent subcommands (see CLAUDE.md): "conferences" is the
+    original Claude-driven web research (costs real API usage) and
+    "trial-signals" is the free, deterministic ClinicalTrials.gov/SEC
+    EDGAR/press-release-RSS check (no LLM, no API cost) — split so the free
+    one can be run far more often without touching the paid one's budget.
+    """
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--conference", nargs="+", default=["ASH", "ASCO"], help="Conference(s) to search (default: ASH ASCO)")
-    parser.add_argument("--year", nargs="+", type=int, default=[2025, 2026], help="Year(s) to search (default: 2025 2026)")
-    parser.add_argument("--indication", default="bladder cancer", help="Cancer type / indication")
-    parser.add_argument("--phase", default="Phase II", help="Trial phase")
-    parser.add_argument("--sender-name", default="[Your Name]", help="Your name for the draft emails")
-    parser.add_argument("--sender-title", default="[Your Title]", help="Your title for the draft emails")
-    parser.add_argument("--sender-company", default="Elevate Imaging", help="Your CRO's name for the draft emails")
-    parser.add_argument(
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--indication", default="bladder cancer", help="Cancer type / indication")
+    common.add_argument("--sender-name", default="[Your Name]", help="Your name for the draft emails")
+    common.add_argument("--sender-title", default="[Your Title]", help="Your title for the draft emails")
+    common.add_argument("--sender-company", default="Elevate Imaging", help="Your CRO's name for the draft emails")
+    common.add_argument(
         "--output",
         "-o",
         default=None,
-        help="Output markdown file path (default: auto-named from --indication/--conference/--year, "
-        'e.g. "bladder_cancer_ASCO_GU_2025_2026_leads_report.md")',
+        help="Output markdown file path (default: auto-named from search parameters)",
     )
-    parser.add_argument(
+    common.add_argument(
         "--hunter-api-key",
         default=os.environ.get("HUNTER_API_KEY"),
         help="Hunter.io API key for verified contact lookup (env: HUNTER_API_KEY). Omit to skip contact lookup.",
     )
-    parser.add_argument(
+    common.add_argument(
         "--hunter-min-confidence",
         type=int,
         default=90,
         help="Minimum Hunter.io confidence score (0-100) required to report an email as confirmed (default: 90)",
     )
-    parser.add_argument(
+    common.add_argument(
         "--hunter-delay-ms",
         type=int,
         default=4000,
         help="Milliseconds to wait between Hunter.io API calls (default: 4000, i.e. 15/min — "
         "Hunter's stated free-tier limit). Lower this if your plan's actual limit is per-second, not per-minute.",
     )
-    parser.add_argument(
-        "--seen-file",
-        default="seen_leads.json",
-        help="Path to the local dedup file (default: seen_leads.json, next to the report). "
-        "Leads already recorded here are skipped in future runs.",
-    )
-    parser.add_argument(
+    common.add_argument(
         "--no-dedup",
         action="store_true",
         help="Show every lead this run, even ones already recorded in --seen-file, and don't update it.",
     )
-    parser.add_argument(
+
+    conf_parser = subparsers.add_parser(
+        "conferences",
+        parents=[common],
+        help="Claude-driven web research across 11 signal types at named conferences (costs API usage).",
+    )
+    conf_parser.add_argument("--conference", nargs="+", default=["ASH", "ASCO"], help="Conference(s) to search (default: ASH ASCO)")
+    conf_parser.add_argument("--year", nargs="+", type=int, default=[2025, 2026], help="Year(s) to search (default: 2025 2026)")
+    conf_parser.add_argument("--phase", default="Phase II", help="Trial phase")
+    conf_parser.add_argument(
+        "--seen-file",
+        default="seen_leads.json",
+        help="Path to the local dedup file (default: seen_leads.json, next to the report).",
+    )
+
+    trial_parser = subparsers.add_parser(
+        "trial-signals",
+        parents=[common],
+        help="Free, deterministic checks (ClinicalTrials.gov, SEC EDGAR, press-release RSS) — no LLM, no API cost.",
+    )
+    trial_parser.add_argument(
+        "--seen-file",
+        default="trial_signals_seen_leads.json",
+        help="Path to the local dedup file (default: trial_signals_seen_leads.json — kept separate "
+        "from the conference search's seen-file since these are independent searches).",
+    )
+    trial_parser.add_argument(
+        "--sponsor-history-file",
+        default="sponsor_phase_history.json",
+        help="Path to the local sponsor-tracking file (default: sponsor_phase_history.json) used to "
+        "recognize when a sponsor that previously ran a Phase 1 trial files a new Phase 2 trial.",
+    )
+    trial_parser.add_argument(
         "--no-ctgov",
         action="store_true",
-        help="Skip the direct ClinicalTrials.gov lookup (free, no API key, no LLM involved) for "
-        "Phase 1 trials nearing or past their primary completion date.",
+        help="Skip the direct ClinicalTrials.gov checks (free, no API key, no LLM involved).",
     )
-    args = parser.parse_args()
-    if not args.output:
-        args.output = default_output_basename(args.indication, args.conference, args.year) + ".md"
+    trial_parser.add_argument(
+        "--no-secedgar",
+        action="store_true",
+        help="Skip the SEC EDGAR 8-K/10-Q filing check (free, no API key, no LLM involved).",
+    )
+    trial_parser.add_argument(
+        "--no-prwire",
+        action="store_true",
+        help="Skip the PR Newswire/Business Wire/GlobeNewswire RSS check (free, no API key, no LLM involved).",
+    )
 
-    raw_response = run_research(args)
-    preamble, leads, excluded = parse_research_output(raw_response)
+    return parser
 
-    if not args.no_ctgov:
-        print("\nChecking ClinicalTrials.gov for Phase 1 trials nearing/past primary completion...", file=sys.stderr)
-        ctgov_leads = clinicaltrials_gov.find_leads(args.indication)
-        if ctgov_leads:
-            print(f"[Found {len(ctgov_leads)} lead(s) via ClinicalTrials.gov]", file=sys.stderr)
-        leads = leads + ctgov_leads
 
+def _finalize_and_write(
+    preamble: str, leads: list, excluded: list, args: argparse.Namespace, raw_response: Optional[str] = None
+) -> None:
+    """Shared dedup -> Hunter enrich -> render -> write tail for both CLI
+    subcommands — only the research step before this differs between them.
+    `raw_response` is only ever set by the conference search (the fallback
+    text written if Claude's response couldn't be parsed as structured
+    leads); the trial-signals search has no such raw text to fall back to.
+    """
     out_path = Path(args.output)
 
     if not leads and not excluded:
-        out_path.write_text(raw_response, encoding="utf-8")
-        print(
-            "\n\n[Warning: could not parse structured lead data from the response — "
-            "saved the raw response instead]",
-            file=sys.stderr,
-        )
+        if raw_response is not None:
+            out_path.write_text(raw_response, encoding="utf-8")
+            print(
+                "\n\n[Warning: could not parse structured lead data from the response — "
+                "saved the raw response instead]",
+                file=sys.stderr,
+            )
+        else:
+            out_path.write_text(
+                f"# {args.indication.title()} — BD Leads for {args.sender_company}\n\n"
+                "No trial signals found in this run.\n",
+                encoding="utf-8",
+            )
         print(f"Saved report to {out_path.resolve()}", file=sys.stderr)
         return
 
@@ -894,6 +1032,33 @@ def main() -> None:
     csv_path = out_path.with_suffix(".csv")
     csv_path.write_text(render_csv(enriched, args), encoding="utf-8", newline="")
     print(f"Saved CSV to {csv_path.resolve()}", file=sys.stderr)
+
+
+def _run_conferences_cli(args: argparse.Namespace) -> None:
+    if not args.output:
+        args.output = default_output_basename(args.indication, args.conference, args.year) + ".md"
+
+    raw_response = run_research(args)
+    preamble, leads, excluded = parse_research_output(raw_response)
+    _finalize_and_write(preamble, leads, excluded, args, raw_response=raw_response)
+
+
+def _run_trial_signals_cli(args: argparse.Namespace) -> None:
+    if not args.output:
+        args.output = default_trial_signals_basename(args.indication) + ".md"
+
+    leads = run_trial_signals_search(args)
+    _finalize_and_write("", leads, [], args, raw_response=None)
+
+
+def main() -> None:
+    parser = build_arg_parser()
+    args = parser.parse_args()
+
+    if args.command == "conferences":
+        _run_conferences_cli(args)
+    else:
+        _run_trial_signals_cli(args)
 
 
 if __name__ == "__main__":

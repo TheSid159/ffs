@@ -9,7 +9,6 @@ import sys
 from pathlib import Path
 
 import bd_agent
-import clinicaltrials_gov
 import conference_dates
 import seen_leads
 
@@ -77,9 +76,9 @@ class QueueWriter:
         pass
 
 
-def build_args(form: dict) -> argparse.Namespace:
-    """Build the Namespace bd_agent's pipeline functions expect from a plain
-    dict of form values (as collected from GUI fields). Raises ValueError on
+def build_conference_args(form: dict) -> argparse.Namespace:
+    """Build the Namespace for the conference search (bd_agent.run_research()
+    and friends) from a plain dict of GUI form values. Raises ValueError on
     bad numeric input so the caller can show a clean error dialog."""
     # Split on commas, not whitespace — several real conference names contain a
     # space themselves (e.g. "ASCO GU"), and whitespace-splitting silently
@@ -111,28 +110,56 @@ def build_args(form: dict) -> argparse.Namespace:
         hunter_delay_ms=4000,
         seen_file=str(app_dir() / "seen_leads.json"),
         no_dedup=False,
-        no_ctgov=False,
     )
 
 
-def run_pipeline(args: argparse.Namespace) -> Path:
-    """Same steps as bd_agent.main(), but returns the report path instead
-    of just printing it, and takes an already-built Namespace (no argv)."""
-    raw_response = bd_agent.run_research(args)
-    preamble, leads, excluded = bd_agent.parse_research_output(raw_response)
+def build_trial_signals_args(form: dict) -> argparse.Namespace:
+    """Build the Namespace for the trial-signals search (bd_agent.
+    run_trial_signals_search()) from a plain dict of GUI form values. No
+    conference/year/phase fields — those only apply to the conference
+    search, a separate, independently-run pipeline (see CLAUDE.md)."""
+    hunter_min_confidence = int(form.get("hunter_min_confidence", "").strip() or 90)
+    indication = form.get("indication", "").strip() or "bladder cancer"
 
-    if not args.no_ctgov:
-        print("\nChecking ClinicalTrials.gov for Phase 1 trials nearing/past primary completion...")
-        ctgov_leads = clinicaltrials_gov.find_leads(args.indication)
-        if ctgov_leads:
-            print(f"[Found {len(ctgov_leads)} lead(s) via ClinicalTrials.gov]")
-        leads = leads + ctgov_leads
+    output_field = form.get("output", "").strip()
+    output = output_field or str(app_dir() / (bd_agent.default_trial_signals_basename(indication) + ".md"))
 
+    return argparse.Namespace(
+        indication=indication,
+        sender_name=form.get("sender_name", "").strip() or "[Your Name]",
+        sender_title=form.get("sender_title", "").strip() or "[Your Title]",
+        sender_company=form.get("sender_company", "").strip() or "Elevate Imaging",
+        output=output,
+        hunter_api_key=form.get("hunter_api_key", "").strip() or None,
+        hunter_min_confidence=hunter_min_confidence,
+        hunter_delay_ms=4000,
+        # Kept separate from the conference search's seen-file/state — these
+        # are independent searches over disjoint signal types.
+        seen_file=str(app_dir() / "trial_signals_seen_leads.json"),
+        sponsor_history_file=str(app_dir() / "sponsor_phase_history.json"),
+        no_dedup=False,
+        no_ctgov=False,
+        no_secedgar=False,
+        no_prwire=False,
+    )
+
+
+def _finalize_and_write(preamble: str, leads: list, excluded: list, args: argparse.Namespace, raw_response=None) -> Path:
+    """Shared dedup -> Hunter enrich -> render -> write tail for both GUI
+    pipelines below — mirrors bd_agent.py's `_finalize_and_write()` but
+    returns the report path instead of just printing it (see gui.py/
+    gui_logic.py's module-split rationale in CLAUDE.md)."""
     out_path = Path(args.output)
 
     if not leads and not excluded:
-        out_path.write_text(raw_response, encoding="utf-8")
-        print("\n\n[Warning: could not parse structured lead data — saved the raw response instead]")
+        if raw_response is not None:
+            out_path.write_text(raw_response, encoding="utf-8")
+            print("\n\n[Warning: could not parse structured lead data — saved the raw response instead]")
+        else:
+            out_path.write_text(
+                f"# {args.indication.title()} — BD Leads for {args.sender_company}\n\nNo trial signals found in this run.\n",
+                encoding="utf-8",
+            )
         return out_path
 
     seen_path = Path(args.seen_file)
@@ -169,3 +196,19 @@ def run_pipeline(args: argparse.Namespace) -> Path:
     print(f"\nSaved CSV to: {csv_path.resolve()}")
 
     return out_path
+
+
+def run_conference_pipeline(args: argparse.Namespace) -> Path:
+    """Same steps as bd_agent._run_conferences_cli(), but returns the report
+    path instead of just printing it, and takes an already-built Namespace
+    (no argv)."""
+    raw_response = bd_agent.run_research(args)
+    preamble, leads, excluded = bd_agent.parse_research_output(raw_response)
+    return _finalize_and_write(preamble, leads, excluded, args, raw_response=raw_response)
+
+
+def run_trial_signals_pipeline(args: argparse.Namespace) -> Path:
+    """Same steps as bd_agent._run_trial_signals_cli(), but returns the
+    report path instead of just printing it."""
+    leads = bd_agent.run_trial_signals_search(args)
+    return _finalize_and_write("", leads, [], args, raw_response=None)

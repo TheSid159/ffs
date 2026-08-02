@@ -1,10 +1,13 @@
 """Direct integration with the ClinicalTrials.gov API v2 (free, no API key)
-for two BD signals that are better found by an exact structured query than
-by asking Claude to search the web for them: an early-phase trial closing in
-on its primary completion date (a lead-time signal — sponsors start planning
-their next phase, imaging vendor included, well before the readout), and an
-early-phase trial whose status just flipped to COMPLETED (the same signal,
-caught from the other side once it's actually happened).
+for three BD signals that are better found by an exact structured query
+than by asking Claude to search the web for them: an early-phase trial
+closing in on its primary completion date (a lead-time signal — sponsors
+start planning their next phase, imaging vendor included, well before the
+readout), an early-phase trial whose status just flipped to COMPLETED (the
+same signal, caught from the other side once it's actually happened), and a
+new, standalone Phase 2 trial filed by a sponsor who's already on record as
+running a Phase 1 trial in this indication (see sponsor_phase_history.py for
+the cross-run tracking this one needs).
 
 Unlike bd_agent.py's Claude-driven research, this module does no LLM
 interpretation: every lead it returns matched a literal ClinicalTrials.gov
@@ -14,14 +17,10 @@ down, API shape changed, corporate firewall) are caught and return an empty
 list rather than raising — a caller shouldn't lose the whole report because
 this one supplementary source was unreachable.
 
-Scope note: only these two triggers are implemented. The third proposed
-trigger ("new Phase 2 filing by the same sponsor that ran an earlier Phase 1")
-needs cross-referencing a sponsor's trial history across runs, which is a
-meaningfully bigger feature (stateful sponsor tracking, not a single
-stateless query) — deferred rather than built as a shallow approximation.
-SEC EDGAR filings, PR Newswire/Business Wire/GlobeNewswire RSS, and paid
-databases (BioPharmCatalyst/AlphaSense/Citeline) from the same proposal are
-not built at all yet; see CLAUDE.md for the scoping decision.
+Paid databases (BioPharmCatalyst/AlphaSense/Citeline) from the original
+proposal are deliberately not built — see CLAUDE.md for the scoping
+decision. SEC EDGAR filings and PR Newswire/Business Wire/GlobeNewswire RSS
+are separate modules (sec_edgar.py, pr_wire_feeds.py).
 """
 
 import datetime as dt
@@ -29,6 +28,8 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
+
+import sponsor_phase_history
 
 API_BASE = "https://clinicaltrials.gov/api/v2/studies"
 REQUEST_TIMEOUT_SECONDS = 20
@@ -169,9 +170,79 @@ def find_recently_completed(indication: str, within_days: int = 14) -> list:
     return leads
 
 
-def find_leads(indication: str) -> list:
+def find_returning_sponsor_new_phase2(indication: str, history_path, within_days: int = 30) -> list:
+    """New, pure-Phase-2 trials (first posted in the last `within_days`
+    days) in `indication` whose sponsor already has a recorded Phase 1 trial
+    in this indication from a previous (or this same) run — the BD
+    proposal's "new Phase 2 filing by a sponsor that previously ran a Phase
+    1 trial" trigger. See sponsor_phase_history.py for the persistence.
+
+    "Pure" Phase 2 deliberately excludes combined Phase 1/2 studies (which
+    `filter.phase=PHASE2` alone would also match, per the OR-matching
+    semantics documented at EARLY_PHASE_FILTER above) — those are already
+    covered by find_primary_completion_approaching()/find_recently_completed(),
+    and aren't a sponsor "graduating" to a standalone next phase the way
+    this trigger means.
+    """
+    history = sponsor_phase_history.load_history(history_path)
+    today = dt.date.today()
+
+    try:
+        phase1_data = _get(
+            {"query.cond": indication, "filter.phase": "PHASE1", "pageSize": 100, "format": "json"}
+        )
+    except (OSError, json.JSONDecodeError):
+        phase1_data = {}
+    phase1_studies = phase1_data.get("studies") or []
+    sponsor_phase_history.record_phase1_sponsors(history, indication, phase1_studies, today.isoformat())
+    sponsor_phase_history.save_history(history_path, history)
+
+    start = today - dt.timedelta(days=within_days)
+    try:
+        phase2_data = _get(
+            {
+                "query.cond": indication,
+                "filter.phase": "PHASE2",
+                "query.term": f"AREA[StudyFirstPostDate]RANGE[{start.isoformat()},{today.isoformat()}]",
+                "pageSize": 20,
+                "format": "json",
+            }
+        )
+    except (OSError, json.JSONDecodeError):
+        return []
+    phase2_studies = phase2_data.get("studies") or []
+    pure_phase2 = [
+        s
+        for s in phase2_studies
+        if ((s.get("protocolSection") or {}).get("designModule") or {}).get("phases") == ["PHASE2"]
+    ]
+
+    returning = sponsor_phase_history.find_returning_sponsors(history, indication, pure_phase2)
+    leads = []
+    for study in returning:
+        sponsor = ((study.get("protocolSection") or {}).get("sponsorCollaboratorsModule") or {}).get(
+            "leadSponsor", {}
+        ).get("name") or "Unknown sponsor"
+        leads.append(
+            _study_to_lead(
+                study,
+                signal_type="phase2_filing_by_returning_sponsor",
+                signal_detail=(
+                    f"{sponsor} has a new Phase 2 trial registered on ClinicalTrials.gov, and previously ran "
+                    "a Phase 1 trial in this indication — likely progressing to its next stage."
+                ),
+            )
+        )
+    return leads
+
+
+def find_leads(indication: str, sponsor_history_path) -> list:
     """All ClinicalTrials.gov-sourced leads for one indication. Each
     sub-lookup fails independently (network issues on one don't lose the
-    other), and both fail silently to an empty list rather than raising —
+    other), and all fail silently to an empty list rather than raising —
     see the module docstring for why."""
-    return find_primary_completion_approaching(indication) + find_recently_completed(indication)
+    return (
+        find_primary_completion_approaching(indication)
+        + find_recently_completed(indication)
+        + find_returning_sponsor_new_phase2(indication, sponsor_history_path)
+    )
