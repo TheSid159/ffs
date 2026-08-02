@@ -339,6 +339,31 @@ rather than the trial-signals search's three fixed sources. Explicitly
 approved as a paid, token-costing path by the user ("I know this will
 cost tokens-thats OK").
 
+**The free trial-signals search runs first, automatically, as a pre-check
+before the paid deep search** — per the user's explicit suggestion ("I
+would suggest that it runs the free first, then the paid"). `_run_phase_transitions_cli()`
+(and `gui_logic.run_phase_transition_pipeline()`) calls
+`run_trial_signals_search(args)` before `run_phase_transition_search()`,
+and the resulting leads are passed into `build_phase_transition_prompt()`
+via `_format_known_leads_for_prompt()` as a "here's what a free check
+already found — don't spend budget re-confirming these" context block.
+This is Python-level sequencing, not Claude's own judgment: the free check
+costs nothing and runs first regardless of what it finds, and Claude is
+instructed to only re-report one of these leads if it can add something
+genuinely new (an additional source, a fuller narrative, a contact) —
+noting so explicitly in `signal_detail` if it does. The free check's own
+leads are shown in the phase-transition report as a separate, informational
+"Already found by the free trial-signals check" section (no contacts/
+emails — that's the trial-signals report's job) even when Claude's own
+`leads` list ends up empty, via `_finalize_and_write()`'s `known_leads`
+param. This pre-check is stateless from the phase-transition run's
+perspective — it doesn't touch `trial_signals_seen_leads.json` (an
+independent later run of the actual "trial-signals" search would still
+see these as new) — but it does share `--sponsor-history-file` with the
+trial-signals search (same default filename), since that's the same
+underlying sponsor-tracking fact store regardless of which search
+triggers the check.
+
 Two things make this prompt different from every other Claude call in
 this tool:
 

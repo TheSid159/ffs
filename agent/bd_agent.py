@@ -326,7 +326,29 @@ If you cannot find any qualifying leads in a category, leave it out of the \
 """
 
 
-def build_phase_transition_prompt(args: argparse.Namespace) -> str:
+def _format_known_leads_for_prompt(known_leads: list) -> str:
+    """Render the free trial-signals search's findings as a short bulleted
+    block to inject into the phase-transition prompt, so Claude knows what's
+    already been found before it starts searching. See
+    build_phase_transition_prompt() for how this is used."""
+    if not known_leads:
+        return (
+            "The free automated check (ClinicalTrials.gov, SEC EDGAR, press-release RSS) "
+            "found nothing this run — search freely, nothing to avoid duplicating."
+        )
+    lines = [
+        "The free automated check (ClinicalTrials.gov, SEC EDGAR, press-release RSS) "
+        "already found the following before you started searching:",
+        "",
+    ]
+    for lead in known_leads:
+        company = lead.get("company_name") or "Unknown company"
+        detail = lead.get("signal_detail") or ""
+        lines.append(f"- {company} — {detail}")
+    return "\n".join(lines)
+
+
+def build_phase_transition_prompt(args: argparse.Namespace, known_leads: Optional[list] = None) -> str:
     """The phase-transition deep-search prompt — deliberately narrower in
     scope than build_prompt() (one signal, not eleven) but much broader in
     source reach: it explicitly encourages LinkedIn, biotech news sites,
@@ -335,7 +357,14 @@ def build_phase_transition_prompt(args: argparse.Namespace) -> str:
     (ClinicalTrials.gov/SEC EDGAR/press-release RSS). See CLAUDE.md for why
     this is a third, separate, paid search rather than folded into either
     existing one.
+
+    `known_leads` (from run_trial_signals_search(), run for free right
+    before this) is injected so Claude doesn't spend paid search budget
+    rediscovering what the free check already found — see
+    _format_known_leads_for_prompt().
     """
+    known_leads_block = _format_known_leads_for_prompt(known_leads or [])
+
     return f"""\
 You are a business development research assistant for an imaging Contract \
 Research Organization (CRO) called "{args.sender_company}". The CRO provides \
@@ -347,13 +376,26 @@ transitioning, or have very recently transitioned, from a Phase 1 to a \
 Phase 2 trial, within roughly the last {args.days} days. A separate, \
 free, automated process already checks three fixed sources for this same \
 signal (ClinicalTrials.gov, SEC EDGAR 8-K/10-Q filings, and a handful of \
-press-release RSS feeds) — your job here is to go further and deeper than \
-those fixed sources can: search LinkedIn (company pages, executive posts), \
-biotech/pharma news sites (e.g. Endpoints News, Fierce Biotech, BioPharma \
-Dive, STAT News), company blogs and press pages, hospital/university press \
-releases, investor-update pages, and conference-presentation summaries — \
-not limited to a fixed list of domains. Search as broadly as your budget \
-allows.
+press-release RSS feeds) and was just run before you started — your job \
+here is to go further and deeper than those fixed sources can: search \
+LinkedIn (company pages, executive posts), biotech/pharma news sites (e.g. \
+Endpoints News, Fierce Biotech, BioPharma Dive, STAT News), company blogs \
+and press pages, hospital/university press releases, investor-update \
+pages, and conference-presentation summaries — not limited to a fixed \
+list of domains. Search as broadly as your budget allows.
+
+{known_leads_block}
+
+Do NOT spend search budget re-confirming or re-reporting any of the leads \
+listed above — treat them as already covered. Only include one of them in \
+your own "leads" output if you find something genuinely new and valuable \
+about it that the free check couldn't have (e.g. an additional \
+corroborating source, a materially fuller narrative, or a specific \
+contact) — and if you do, say so explicitly in "signal_detail" (e.g. \
+"Also independently found by the automated ClinicalTrials.gov/SEC EDGAR/ \
+press-release check; adding here because..."). Otherwise, focus your \
+search entirely on finding companies/signals those three fixed sources \
+missed.
 
 For every company/trial you find:
 
@@ -492,15 +534,18 @@ def run_research(args: argparse.Namespace) -> str:
     )
 
 
-def run_phase_transition_search(args: argparse.Namespace) -> str:
+def run_phase_transition_search(args: argparse.Namespace, known_leads: Optional[list] = None) -> str:
     """Send the phase-transition deep-search prompt to Claude and return the
     full streamed response. See build_phase_transition_prompt() for what
     makes this different from run_research(): one narrow signal, but full
     open-web search reach (LinkedIn, biotech news, blogs, hospital/
     university press — not limited to named conferences or a fixed source
     list), with Claude itself responsible for cross-source dedup and
-    drafting a synthesized email opening per lead."""
-    prompt = build_phase_transition_prompt(args)
+    drafting a synthesized email opening per lead. `known_leads` are the
+    free trial-signals search's findings (run first — see
+    _run_phase_transitions_cli()), passed through so Claude doesn't spend
+    budget rediscovering them."""
+    prompt = build_phase_transition_prompt(args, known_leads)
     return _stream_claude_research(
         prompt,
         max_uses=60,
@@ -794,6 +839,7 @@ def render_report(
     args: argparse.Namespace,
     hunter_enabled: bool,
     repeat_leads: Optional[list] = None,
+    known_leads: Optional[list] = None,
 ) -> str:
     # render_report() is shared by all three searches (conference, trial-signals,
     # phase-transitions — see CLAUDE.md), which are separate, independently-run
@@ -945,6 +991,28 @@ def render_report(
         for lead, first_seen in repeat_leads:
             title = _lead_title(lead)
             lines.append(f"- **{lead.get('company_name') or 'Unknown'}** — {title} (first seen {first_seen})")
+
+    if known_leads:
+        # Only ever set by the phase-transition search — the free
+        # trial-signals check run first as a pre-check (see
+        # _run_phase_transitions_cli()). Shown for transparency, not as
+        # full leads (no contact/email — that's the trial-signals report's
+        # job); Claude was told not to re-report these unless it found
+        # something genuinely new about them.
+        lines += [
+            "",
+            "## Already found by the free trial-signals check (run first, not repeated as leads above)",
+            "",
+            "_These were found by the free ClinicalTrials.gov/SEC EDGAR/press-release check that runs "
+            "before this deep search — Claude was told not to spend search budget re-reporting them "
+            "unless it found something genuinely new. Run the trial-signals search separately for full "
+            "details/contacts on these._",
+            "",
+        ]
+        for lead in known_leads:
+            title = _lead_title(lead)
+            detail = lead.get("signal_detail") or ""
+            lines.append(f"- **{lead.get('company_name') or 'Unknown'}** — {title}: {detail}")
 
     return "\n".join(lines)
 
@@ -1148,18 +1216,34 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Path to the local dedup file (default: phase_transition_seen_leads.json — kept separate "
         "from the other two searches' seen-files since these are independent searches).",
     )
+    phase_parser.add_argument(
+        "--sponsor-history-file",
+        default="sponsor_phase_history.json",
+        help="Path to the local sponsor-tracking file (default: sponsor_phase_history.json — same "
+        "default as trial-signals, since this is run first as a free pre-check before the deep "
+        "search and the sponsor-tracking data is shared between the two).",
+    )
 
     return parser
 
 
 def _finalize_and_write(
-    preamble: str, leads: list, excluded: list, args: argparse.Namespace, raw_response: Optional[str] = None
+    preamble: str,
+    leads: list,
+    excluded: list,
+    args: argparse.Namespace,
+    raw_response: Optional[str] = None,
+    known_leads: Optional[list] = None,
 ) -> None:
-    """Shared dedup -> Hunter enrich -> render -> write tail for both CLI
-    subcommands — only the research step before this differs between them.
-    `raw_response` is only ever set by the conference search (the fallback
-    text written if Claude's response couldn't be parsed as structured
-    leads); the trial-signals search has no such raw text to fall back to.
+    """Shared dedup -> Hunter enrich -> render -> write tail for all three
+    CLI subcommands — only the research step before this differs between
+    them. `raw_response` is only ever set by the conference/phase-transition
+    searches (the fallback text written if Claude's response couldn't be
+    parsed as structured leads); the trial-signals search has no such raw
+    text to fall back to. `known_leads` is only ever set by the
+    phase-transition search — the free trial-signals findings it was given
+    as context (see _run_phase_transitions_cli()) — shown in the report for
+    transparency even when Claude's own leads list is empty.
     """
     out_path = Path(args.output)
 
@@ -1172,9 +1256,15 @@ def _finalize_and_write(
                 file=sys.stderr,
             )
         else:
+            body = "No trial signals found in this run.\n"
+            if known_leads:
+                body = (
+                    f"No new leads from the deep search this run. {len(known_leads)} lead(s) "
+                    "were found by the free trial-signals check that ran first — see the "
+                    "trial-signals report for those.\n"
+                )
             out_path.write_text(
-                f"# {args.indication.title()} — BD Leads for {args.sender_company}\n\n"
-                "No trial signals found in this run.\n",
+                f"# {args.indication.title()} — BD Leads for {args.sender_company}\n\n" + body,
                 encoding="utf-8",
             )
         print(f"Saved report to {out_path.resolve()}", file=sys.stderr)
@@ -1208,7 +1298,13 @@ def _finalize_and_write(
         )
 
     report = render_report(
-        preamble, enriched, excluded, args, hunter_enabled=bool(args.hunter_api_key), repeat_leads=repeat_leads
+        preamble,
+        enriched,
+        excluded,
+        args,
+        hunter_enabled=bool(args.hunter_api_key),
+        repeat_leads=repeat_leads,
+        known_leads=known_leads,
     )
     out_path.write_text(report, encoding="utf-8")
     print(f"Saved report to {out_path.resolve()}", file=sys.stderr)
@@ -1239,9 +1335,22 @@ def _run_phase_transitions_cli(args: argparse.Namespace) -> None:
     if not args.output:
         args.output = default_phase_transition_basename(args.indication) + ".md"
 
-    raw_response = run_phase_transition_search(args)
+    # Run the free trial-signals check first (costs nothing) and pass its
+    # findings into the paid deep search as context, so Claude doesn't spend
+    # search budget rediscovering what a deterministic check already found —
+    # see build_phase_transition_prompt(). This doesn't touch trial-signals'
+    # own seen-file/report — it's a fresh, unrecorded check purely to inform
+    # this run, not a substitute for actually running "trial-signals" — but
+    # it does share --sponsor-history-file, since that's the same underlying
+    # fact store regardless of which search triggers the check.
+    args.no_ctgov = False
+    args.no_secedgar = False
+    args.no_prwire = False
+    known_leads = run_trial_signals_search(args)
+
+    raw_response = run_phase_transition_search(args, known_leads)
     preamble, leads, excluded = parse_research_output(raw_response)
-    _finalize_and_write(preamble, leads, excluded, args, raw_response=raw_response)
+    _finalize_and_write(preamble, leads, excluded, args, raw_response=raw_response, known_leads=known_leads)
 
 
 def main() -> None:

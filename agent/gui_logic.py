@@ -169,15 +169,23 @@ def build_phase_transition_args(form: dict) -> argparse.Namespace:
         # Kept separate from the other two searches' seen-files/state — all
         # three are independent searches over disjoint signal types.
         seen_file=str(app_dir() / "phase_transition_seen_leads.json"),
+        # Same default filename as trial-signals — run first as a free
+        # pre-check before the deep search (see run_phase_transition_pipeline()),
+        # and the sponsor-tracking data is the same underlying fact store
+        # regardless of which search triggers the check.
+        sponsor_history_file=str(app_dir() / "sponsor_phase_history.json"),
         no_dedup=False,
     )
 
 
-def _finalize_and_write(preamble: str, leads: list, excluded: list, args: argparse.Namespace, raw_response=None) -> Path:
-    """Shared dedup -> Hunter enrich -> render -> write tail for both GUI
-    pipelines below — mirrors bd_agent.py's `_finalize_and_write()` but
+def _finalize_and_write(
+    preamble: str, leads: list, excluded: list, args: argparse.Namespace, raw_response=None, known_leads=None
+) -> Path:
+    """Shared dedup -> Hunter enrich -> render -> write tail for all three
+    GUI pipelines below — mirrors bd_agent.py's `_finalize_and_write()` but
     returns the report path instead of just printing it (see gui.py/
-    gui_logic.py's module-split rationale in CLAUDE.md)."""
+    gui_logic.py's module-split rationale in CLAUDE.md). `known_leads` is
+    only ever set by the phase-transition pipeline."""
     out_path = Path(args.output)
 
     if not leads and not excluded:
@@ -185,8 +193,15 @@ def _finalize_and_write(preamble: str, leads: list, excluded: list, args: argpar
             out_path.write_text(raw_response, encoding="utf-8")
             print("\n\n[Warning: could not parse structured lead data — saved the raw response instead]")
         else:
+            body = "No trial signals found in this run.\n"
+            if known_leads:
+                body = (
+                    f"No new leads from the deep search this run. {len(known_leads)} lead(s) "
+                    "were found by the free trial-signals check that ran first — see the "
+                    "trial-signals report for those.\n"
+                )
             out_path.write_text(
-                f"# {args.indication.title()} — BD Leads for {args.sender_company}\n\nNo trial signals found in this run.\n",
+                f"# {args.indication.title()} — BD Leads for {args.sender_company}\n\n" + body,
                 encoding="utf-8",
             )
         return out_path
@@ -216,7 +231,13 @@ def _finalize_and_write(preamble: str, leads: list, excluded: list, args: argpar
         )
 
     report = bd_agent.render_report(
-        preamble, enriched, excluded, args, hunter_enabled=bool(args.hunter_api_key), repeat_leads=repeat_leads
+        preamble,
+        enriched,
+        excluded,
+        args,
+        hunter_enabled=bool(args.hunter_api_key),
+        repeat_leads=repeat_leads,
+        known_leads=known_leads,
     )
     out_path.write_text(report, encoding="utf-8")
 
@@ -245,7 +266,15 @@ def run_trial_signals_pipeline(args: argparse.Namespace) -> Path:
 
 def run_phase_transition_pipeline(args: argparse.Namespace) -> Path:
     """Same steps as bd_agent._run_phase_transitions_cli(), but returns the
-    report path instead of just printing it."""
-    raw_response = bd_agent.run_phase_transition_search(args)
+    report path instead of just printing it. Runs the free trial-signals
+    check first and passes its findings to the deep search as context, so
+    Claude doesn't spend paid search budget rediscovering them — see
+    bd_agent._run_phase_transitions_cli()."""
+    args.no_ctgov = False
+    args.no_secedgar = False
+    args.no_prwire = False
+    known_leads = bd_agent.run_trial_signals_search(args)
+
+    raw_response = bd_agent.run_phase_transition_search(args, known_leads)
     preamble, leads, excluded = bd_agent.parse_research_output(raw_response)
-    return _finalize_and_write(preamble, leads, excluded, args, raw_response=raw_response)
+    return _finalize_and_write(preamble, leads, excluded, args, raw_response=raw_response, known_leads=known_leads)

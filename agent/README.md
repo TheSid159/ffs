@@ -61,6 +61,14 @@ from a simple web search:
   specific company, so it can reference the real, specific facts rather
   than generic language.
 
+Before the paid deep search runs, this button automatically runs the free
+trial-signals check first and tells Claude what it already found — so
+Claude focuses its (paid) search budget on finding what those three fixed
+sources missed, rather than re-confirming the same leads. Those free
+findings show up in the phase-transition report too, in their own
+"already found for free" section, alongside whatever Claude found on its
+own.
+
 Costs API usage like the conference search, but is a separate search
 (separate button/subcommand, separate report, separate history) since it's
 a different kind of research task — one signal hunted broadly, rather than
