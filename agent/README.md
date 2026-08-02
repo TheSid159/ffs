@@ -128,9 +128,13 @@ report flags those with a note to review the wording before relying on it.
 
 The script never sends anything — you review and send each draft yourself.
 
-Each run costs API usage (a few dollars per run at typical depth, since it
-does many web searches over an extended research task) plus Hunter.io usage
-(one lookup per lead — check your Hunter plan's monthly search limit).
+Each run costs API usage (typically a few dollars, since it does many web
+searches over an extended research task) plus Hunter.io usage (one lookup
+per lead — check your Hunter plan's monthly search limit). An approximate
+cost for the run just completed — based on its actual token and search
+usage, not a guess — prints at the end of the progress log in both the GUI
+and CLI. It's an estimate, not an official bill; check
+console.anthropic.com for exact billing.
 
 ## Next steps to consider
 

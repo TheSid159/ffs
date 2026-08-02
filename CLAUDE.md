@@ -312,6 +312,23 @@ until surfaced explicitly. `run_research()` catches
 firewall/VPN, antivirus HTTPS interception) — don't let that collapse back
 to just re-raising or printing the bare SDK exception.
 
+### Per-run cost estimate
+
+`bd_agent._estimate_run_cost(usage)` turns a `Message.usage` object into an
+approximate dollar figure, printed to stderr at the end of every
+`run_research()` call (and `conference_dates.run_lookup()`, which imports
+it from `bd_agent` rather than duplicating the pricing constants — both
+calls run on the same model, `claude-opus-5`). Covers input/output tokens
+at Opus 5 rates ($5/$25 per MTok), web search at $10/1,000 searches, and
+cache read/write at their standard multipliers (0.1x / 1.25x) even though
+this pipeline doesn't currently set `cache_control` anywhere, so those
+terms are normally 0 — included for completeness in case caching is added
+later. This is explicitly labeled an estimate in the printed message, not
+a claim of exact billing — re-verify `OPUS_5_INPUT_PER_MTOK` /
+`OPUS_5_OUTPUT_PER_MTOK` / `WEB_SEARCH_PER_1000_SEARCHES` against
+platform.claude.com/docs/en/pricing if Anthropic's pricing changes, rather
+than trusting these hardcoded constants indefinitely.
+
 ### Hunter.io requires a browser-like User-Agent
 
 `hunter_contacts._get()` sets an explicit `User-Agent` header on every

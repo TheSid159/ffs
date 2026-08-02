@@ -39,6 +39,29 @@ import seen_leads
 MODEL = "claude-opus-5"
 JSON_FENCE_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 
+# Claude Opus 5 API pricing (confirmed against platform.claude.com/docs/en/pricing
+# at the time this was written) — used only to print an approximate per-run cost
+# from the response's own usage numbers, not an official bill. Check
+# console.anthropic.com for exact billing; re-check this page if pricing changes.
+OPUS_5_INPUT_PER_MTOK = 5.00
+OPUS_5_OUTPUT_PER_MTOK = 25.00
+WEB_SEARCH_PER_1000_SEARCHES = 10.00
+
+
+def _estimate_run_cost(usage) -> tuple:
+    """Approximate $ cost and web-search-request count from a Message's
+    `usage` object. Cache read/write costs are included for completeness
+    even though this pipeline doesn't currently use prompt caching (so
+    they'll normally be 0) — see CLAUDE.md if that changes."""
+    input_cost = usage.input_tokens / 1_000_000 * OPUS_5_INPUT_PER_MTOK
+    output_cost = usage.output_tokens / 1_000_000 * OPUS_5_OUTPUT_PER_MTOK
+    cache_read_cost = (usage.cache_read_input_tokens or 0) / 1_000_000 * OPUS_5_INPUT_PER_MTOK * 0.1
+    cache_write_cost = (usage.cache_creation_input_tokens or 0) / 1_000_000 * OPUS_5_INPUT_PER_MTOK * 1.25
+    search_requests = usage.server_tool_use.web_search_requests if usage.server_tool_use else 0
+    search_cost = search_requests / 1000 * WEB_SEARCH_PER_1000_SEARCHES
+    total = input_cost + output_cost + cache_read_cost + cache_write_cost + search_cost
+    return total, search_requests
+
 
 def build_prompt(args: argparse.Namespace) -> str:
     conference_list = " and ".join(args.conference)
@@ -283,6 +306,17 @@ def run_research(args: argparse.Namespace) -> str:
                     "response may be incomplete. Re-run to continue.]",
                     file=sys.stderr,
                 )
+
+            usage = final_message.usage
+            cost, search_requests = _estimate_run_cost(usage)
+            print(
+                f"\n\n[Usage: {usage.input_tokens:,} input tokens, "
+                f"{usage.output_tokens:,} output tokens, {search_requests} web "
+                f"search(es) — approx. cost ${cost:.2f}. This is an estimate from "
+                "this response's own token counts, not an official bill — check "
+                "console.anthropic.com for exact billing.]",
+                file=sys.stderr,
+            )
     except anthropic.APIConnectionError as exc:
         # The SDK's own message is a hardcoded, generic "Connection error." —
         # it deliberately wraps (via `raise ... from err`) the real httpx/network

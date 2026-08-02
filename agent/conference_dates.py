@@ -18,6 +18,7 @@ from pathlib import Path
 
 import anthropic
 
+import bd_agent
 import conferences
 
 MODEL = "claude-opus-5"
@@ -78,6 +79,15 @@ def run_lookup() -> str:
             for event in stream:
                 if event.type == "content_block_delta" and event.delta.type == "text_delta":
                     full_text_parts.append(event.delta.text)
+
+            usage = stream.get_final_message().usage
+            cost, search_requests = bd_agent._estimate_run_cost(usage)
+            print(
+                f"[Usage: {usage.input_tokens:,} input tokens, {usage.output_tokens:,} "
+                f"output tokens, {search_requests} web search(es) — approx. cost "
+                f"${cost:.2f}. Estimate only, not an official bill.]",
+                file=sys.stderr,
+            )
     except anthropic.APIConnectionError as exc:
         # Same generic-message issue as bd_agent.run_research() — surface
         # the real cause instead of the SDK's bare "Connection error."
