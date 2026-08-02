@@ -153,6 +153,7 @@ def build_trial_signals_args(form: dict) -> argparse.Namespace:
         # are independent searches over disjoint signal types.
         seen_file=str(app_dir() / "trial_signals_seen_leads.json"),
         sponsor_history_file=str(app_dir() / "sponsor_phase_history.json"),
+        site_history_file=str(app_dir() / "trial_site_history.json"),
         no_dedup=False,
         no_ctgov=False,
         no_secedgar=False,
@@ -191,6 +192,7 @@ def build_phase_transition_args(form: dict) -> argparse.Namespace:
         # and the sponsor-tracking data is the same underlying fact store
         # regardless of which search triggers the check.
         sponsor_history_file=str(app_dir() / "sponsor_phase_history.json"),
+        site_history_file=str(app_dir() / "trial_site_history.json"),
         no_dedup=False,
         **_outbox_fields(form),
     )

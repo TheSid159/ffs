@@ -54,6 +54,20 @@ def dedup_key(lead: dict) -> str:
             return f"{signal_type}|{domain}|{registry_id}"
         return f"{signal_type}|{company_name}|{registry_id}"
 
+    if signal_type == "trial_site_expansion":
+        # Also ClinicalTrials.gov-sourced with a stable registry_id, but
+        # unlike the four signals above, the *same* trial can legitimately
+        # fire this signal again in a later run once it adds more sites on
+        # top of the ones already reported — that's a genuinely new event,
+        # not a repeat. So the key also folds in the site count at the time
+        # of this event (see clinicaltrials_gov.find_site_expansion()'s
+        # site_expansion_snapshot field); a second, larger expansion gets a
+        # different key and correctly surfaces as new, while an identical
+        # re-run (same trial, same site count) still dedups as a repeat.
+        registry_id = (lead.get("registry_id") or "").strip().lower()
+        snapshot = lead.get("site_expansion_snapshot")
+        return f"{signal_type}|{registry_id}|{snapshot}"
+
     if signal_type == "sec_filing_signal":
         # registry_id is the filing's SEC accession number (adsh) — a stable
         # per-document ID, unlike the free-text detail fallback below.

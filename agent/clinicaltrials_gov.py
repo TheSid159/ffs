@@ -1,13 +1,16 @@
 """Direct integration with the ClinicalTrials.gov API v2 (free, no API key)
-for three BD signals that are better found by an exact structured query
+for four BD signals that are better found by an exact structured query
 than by asking Claude to search the web for them: an early-phase trial
 closing in on its primary completion date (a lead-time signal — sponsors
 start planning their next phase, imaging vendor included, well before the
 readout), an early-phase trial whose status just flipped to COMPLETED (the
-same signal, caught from the other side once it's actually happened), and a
+same signal, caught from the other side once it's actually happened), a
 new, standalone Phase 2 trial filed by a sponsor who's already on record as
 running a Phase 1 trial in this indication (see sponsor_phase_history.py for
-the cross-run tracking this one needs).
+the cross-run tracking this one needs), and a trial that has added new
+sites/locations since a previous run recorded its site list (see
+trial_site_history.py — multi-region/multi-site trials are where
+centralized imaging review beats inconsistent local site reads).
 
 Unlike bd_agent.py's Claude-driven research, this module does no LLM
 interpretation: every lead it returns matched a literal ClinicalTrials.gov
@@ -30,6 +33,7 @@ import urllib.parse
 import urllib.request
 
 import sponsor_phase_history
+import trial_site_history
 
 API_BASE = "https://clinicaltrials.gov/api/v2/studies"
 REQUEST_TIMEOUT_SECONDS = 20
@@ -236,7 +240,66 @@ def find_returning_sponsor_new_phase2(indication: str, history_path, within_days
     return leads
 
 
-def find_leads(indication: str, sponsor_history_path) -> list:
+def find_site_expansion(indication: str, site_history_path) -> list:
+    """Trials in `indication`, currently recruiting or active, that have
+    added new sites/locations since a previous run recorded their site
+    list — a signal that a trial is scaling up, and multi-region/
+    multi-site trials are exactly where centralized imaging review beats
+    inconsistent local site reads (see CLAUDE.md). Deliberately not
+    phase-scoped like EARLY_PHASE_FILTER's other two lead-time signals in
+    this module — site expansion is a meaningful BD signal at any phase,
+    not just Phase 1. See trial_site_history.py for the cross-run site-list
+    tracking this needs; a trial only produces a lead once it's been seen
+    at least twice, since the first sighting has nothing to diff against.
+    """
+    today = dt.date.today()
+    history = trial_site_history.load_history(site_history_path)
+
+    try:
+        data = _get(
+            {
+                "query.cond": indication,
+                "filter.overallStatus": "RECRUITING,ACTIVE_NOT_RECRUITING",
+                "pageSize": 100,
+                "format": "json",
+            }
+        )
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    studies = data.get("studies") or []
+    expansions = trial_site_history.record_and_find_new_sites(history, indication, studies, today.isoformat())
+    trial_site_history.save_history(site_history_path, history)
+
+    studies_by_nct_id = {}
+    for study in studies:
+        nct_id = (study.get("protocolSection") or {}).get("identificationModule", {}).get("nctId")
+        if nct_id:
+            studies_by_nct_id[nct_id] = study
+
+    leads = []
+    for nct_id, new_sites in expansions.items():
+        study = studies_by_nct_id.get(nct_id)
+        if not study:
+            continue
+        count = len(new_sites)
+        preview = ", ".join(trial_site_history.site_label(key) for key in new_sites[:3])
+        detail = (
+            f"Trial has added {count} new site{'s' if count != 1 else ''} since it was last checked"
+            f" (including {preview})"
+            " — expanding multi-site trials are where centralized imaging review beats inconsistent local reads."
+        )
+        lead = _study_to_lead(study, signal_type="trial_site_expansion", signal_detail=detail)
+        # Total current site count, not just the new ones — used by
+        # seen_leads.dedup_key() so a *later, separate* expansion of the
+        # same trial (a different site count) isn't wrongly treated as a
+        # repeat of this one. See seen_leads.py's trial_site_expansion branch.
+        lead["site_expansion_snapshot"] = len(trial_site_history.site_keys(study))
+        leads.append(lead)
+    return leads
+
+
+def find_leads(indication: str, sponsor_history_path, site_history_path) -> list:
     """All ClinicalTrials.gov-sourced leads for one indication. Each
     sub-lookup fails independently (network issues on one don't lose the
     other), and all fail silently to an empty list rather than raising —
@@ -245,4 +308,5 @@ def find_leads(indication: str, sponsor_history_path) -> list:
         find_primary_completion_approaching(indication)
         + find_recently_completed(indication)
         + find_returning_sponsor_new_phase2(indication, sponsor_history_path)
+        + find_site_expansion(indication, site_history_path)
     )

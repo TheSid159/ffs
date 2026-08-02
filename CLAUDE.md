@@ -84,7 +84,8 @@ python bd_agent.py phase-transitions \
 
 There is no test suite, linter, or build step — `python -m py_compile
 bd_agent.py hunter_contacts.py seen_leads.py clinicaltrials_gov.py
-sec_edgar.py pr_wire_feeds.py sponsor_phase_history.py gui_logic.py gui.py`
+sec_edgar.py pr_wire_feeds.py sponsor_phase_history.py trial_site_history.py
+gui_logic.py gui.py`
 is the only pre-flight check currently used before committing changes
 (`gui.py` itself imports `tkinter`, which may not be installed in a
 headless dev environment — a `py_compile` syntax check still passes
@@ -438,7 +439,7 @@ there is no `raw_response` to fall back to if something goes wrong — see
   queries ClinicalTrials.gov directly with a literal filter and only
   returns trials that actually matched, so its leads are exact-match and
   reproducible run to run rather than Claude's summary of what it found
-  searching the web. Three signal types: `trial_milestone_approaching`
+  searching the web. Four signal types: `trial_milestone_approaching`
   (a Phase 1 or Phase 1/2 trial in the target indication, `RECRUITING` or
   `ACTIVE_NOT_RECRUITING`, with a primary completion date 60-90 days out —
   a lead-time signal that the sponsor is about to plan its next phase,
@@ -449,8 +450,16 @@ there is no `raw_response` to fall back to if something goes wrong — see
   `phase2_filing_by_returning_sponsor` (a new, standalone Phase 2 trial
   filed by a sponsor already on record as having run a Phase 1 trial in
   this indication — see `sponsor_phase_history.py` below for the
-  cross-run tracking this one needs). `find_leads()` is called from
-  `bd_agent.run_trial_signals_search()`. `filter.phase=PHASE1` is
+  cross-run tracking this one needs), and `trial_site_expansion` (a trial
+  that has added new sites/locations since a previous run recorded its
+  site list — see `trial_site_history.py` below; deliberately not
+  phase-scoped like the other three, since site expansion is a meaningful
+  BD signal at any phase, not just Phase 1 — multi-region/multi-site
+  trials are exactly where centralized imaging review beats inconsistent
+  local site reads, the same rationale as the conference search's
+  `trial_expansion` signal type, just sourced from structured
+  ClinicalTrials.gov data instead of Claude web search). `find_leads()` is
+  called from `bd_agent.run_trial_signals_search()`. `filter.phase=PHASE1` is
   deliberately the only phase filter used for the first two lookups —
   ClinicalTrials.gov's phase filter is OR-matching against a study's
   *phases list*, so filtering on `PHASE1` alone already includes combined
@@ -466,18 +475,25 @@ there is no `raw_response` to fall back to if something goes wrong — see
   *exactly* `["PHASE2"]` — excluding combined Phase 1/2 studies, which are
   already covered by the other two signals and aren't a sponsor
   "graduating" to a standalone next phase the way this trigger means.
-  `seen_leads.dedup_key()` keys all three signal types on `registry_id`
-  (the NCT number) the same way it already did for `new_registration`,
-  rather than falling through to the generic free-text-detail fallback —
-  the detail text embeds a completion-date estimate that could drift
-  slightly between runs even for the identical trial, where the NCT
-  number never does. Not yet verified against a live API response — this
-  dev sandbox's network policy blocks `clinicaltrials.gov` outright, so
-  all testing here used `unittest.mock.patch` on `clinicaltrials_gov._get()`
-  with a fabricated study JSON shaped from the v2 API's documented schema;
-  the query parameter names and Essie `AREA[]RANGE[]` date syntax are
-  confirmed from ClinicalTrials.gov's own documentation, but a real run
-  should be checked once by the user before relying on it.
+  `seen_leads.dedup_key()` keys the first three signal types on
+  `registry_id` (the NCT number) the same way it already did for
+  `new_registration`, rather than falling through to the generic
+  free-text-detail fallback — the detail text embeds a completion-date
+  estimate that could drift slightly between runs even for the identical
+  trial, where the NCT number never does. `trial_site_expansion` keys on
+  `registry_id` *plus* the trial's total site count at the time of that
+  lead (`site_expansion_snapshot`, set in `find_site_expansion()`) —
+  unlike the other three, the same trial can legitimately fire this
+  signal again in a later run once it adds further sites on top of ones
+  already reported, and a plain `registry_id` key would wrongly treat
+  that second, larger expansion as a repeat of the first. Not yet
+  verified against a live API response — this dev sandbox's network
+  policy blocks `clinicaltrials.gov` outright, so all testing here used
+  `unittest.mock.patch` on `clinicaltrials_gov._get()` with a fabricated
+  study JSON shaped from the v2 API's documented schema; the query
+  parameter names and Essie `AREA[]RANGE[]` date syntax are confirmed from
+  ClinicalTrials.gov's own documentation, but a real run should be checked
+  once by the user before relying on it.
 
 - **`agent/sponsor_phase_history.py`** — the cross-run state
   `find_returning_sponsor_new_phase2()` needs: a small local JSON file
@@ -490,6 +506,22 @@ there is no `raw_response` to fall back to if something goes wrong — see
   filing (found in a different run) get correlated correctly, which is
   the entire point of this module existing as stateful tracking rather
   than a single stateless query like the rest of `clinicaltrials_gov.py`.
+
+- **`agent/trial_site_history.py`** — the cross-run state
+  `find_site_expansion()` needs, mirroring `sponsor_phase_history.py`'s
+  pattern exactly but tracking a trial's site list instead of a sponsor's
+  Phase 1 trials: a small local JSON file (`trial_site_history.json`,
+  gitignored) mapping indication -> NCT ID -> the site list (facility +
+  city + country, since the v2 API exposes no persistent per-location ID
+  to key on) recorded for that trial as of the last run. Every run records
+  each trial's current site list (persisting immediately) and, if that
+  trial already had a recorded, non-empty site list from a previous run,
+  checks whether any of its current sites weren't in that recording — new
+  ones are the signal. A trial's first sighting only establishes the
+  baseline (nothing to diff against yet), and a trial whose prior
+  recording had *no* sites at all is also excluded from firing on its
+  first populated sighting — that's ClinicalTrials.gov filling in location
+  data late, not a real expansion event.
 
 - **`agent/sec_edgar.py`** — direct integration with the SEC EDGAR
   full-text search API (`https://efts.sec.gov/LATEST/search-index`, free,

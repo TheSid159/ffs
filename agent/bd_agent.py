@@ -574,7 +574,7 @@ def parse_research_output(text: str):
 
 def run_trial_signals_search(args: argparse.Namespace) -> list:
     """Aggregate every free, deterministic (no-LLM) trial-signal lead:
-    ClinicalTrials.gov (3 signals — see clinicaltrials_gov.py), SEC EDGAR
+    ClinicalTrials.gov (4 signals — see clinicaltrials_gov.py), SEC EDGAR
     8-K/10-Q filings, and press-release RSS feeds. This is the whole point
     of splitting it from the conference search (run_research(), above): none
     of these three sources costs API money or uses Claude at all, so this
@@ -586,8 +586,10 @@ def run_trial_signals_search(args: argparse.Namespace) -> list:
     leads = []
 
     if not args.no_ctgov:
-        print("Checking ClinicalTrials.gov for trial milestones, completions, and returning-sponsor filings...", file=sys.stderr)
-        ctgov_leads = clinicaltrials_gov.find_leads(args.indication, Path(args.sponsor_history_file))
+        print("Checking ClinicalTrials.gov for trial milestones, completions, returning-sponsor filings, and site expansions...", file=sys.stderr)
+        ctgov_leads = clinicaltrials_gov.find_leads(
+            args.indication, Path(args.sponsor_history_file), Path(args.site_history_file)
+        )
         print(f"[Found {len(ctgov_leads)} lead(s) via ClinicalTrials.gov]", file=sys.stderr)
         leads += ctgov_leads
 
@@ -761,6 +763,11 @@ def _opening_and_transition(lead: dict, args: argparse.Namespace) -> tuple:
         trial = lead.get("trial_name") or "your Phase 1 trial"
         opening = f"I saw via ClinicalTrials.gov that {company}'s Phase 1 trial ({trial}) recently completed. Congratulations on reaching this milestone."
         transition = f"Given this, {intro} as you plan the next phase of development."
+
+    elif signal_type == "trial_site_expansion":
+        trial = lead.get("trial_name") or "your trial"
+        opening = f"I saw via ClinicalTrials.gov that {company}'s trial ({trial}) has recently expanded to new sites."
+        transition = f"Given this, {intro} as you scale imaging assessment consistently across these new sites."
 
     elif signal_type == "phase2_filing_by_returning_sponsor":
         opening = (
@@ -1213,6 +1220,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "recognize when a sponsor that previously ran a Phase 1 trial files a new Phase 2 trial.",
     )
     trial_parser.add_argument(
+        "--site-history-file",
+        default="trial_site_history.json",
+        help="Path to the local trial-site-tracking file (default: trial_site_history.json) used to "
+        "recognize when a trial has added new sites/locations since a previous run.",
+    )
+    trial_parser.add_argument(
         "--no-ctgov",
         action="store_true",
         help="Skip the direct ClinicalTrials.gov checks (free, no API key, no LLM involved).",
@@ -1253,6 +1266,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Path to the local sponsor-tracking file (default: sponsor_phase_history.json — same "
         "default as trial-signals, since this is run first as a free pre-check before the deep "
         "search and the sponsor-tracking data is shared between the two).",
+    )
+    phase_parser.add_argument(
+        "--site-history-file",
+        default="trial_site_history.json",
+        help="Path to the local trial-site-tracking file (default: trial_site_history.json — same "
+        "default as trial-signals, for the same free-pre-check reason as --sponsor-history-file).",
     )
 
     return parser

@@ -29,9 +29,11 @@ safe to run as often as you like (daily, even hourly):
 
 - **ClinicalTrials.gov** — a Phase 1 (or Phase 1/2) trial in your
   indication with a primary completion date 60-90 days out; one whose
-  status just completed; and a new, standalone Phase 2 trial filed by a
+  status just completed; a new, standalone Phase 2 trial filed by a
   sponsor who's already on record (tracked locally across runs) as having
-  run a Phase 1 trial in this indication.
+  run a Phase 1 trial in this indication; and a trial (any phase) that has
+  added new sites/locations since a previous run (also tracked locally
+  across runs).
 - **SEC EDGAR** — recent 8-K/10-Q filings from public biotechs mentioning
   Phase 1-to-Phase-2 transition language (e.g. "End-of-Phase 1 meeting",
   "Top-line Phase 1 data", "Initiation of Phase 2 trial").
