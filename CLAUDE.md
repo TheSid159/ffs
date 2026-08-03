@@ -108,7 +108,7 @@ python bd_agent.py signal-sweep \
 There is no test suite, linter, or build step — `python -m py_compile
 bd_agent.py hunter_contacts.py seen_leads.py clinicaltrials_gov.py
 sec_edgar.py pr_wire_feeds.py sponsor_phase_history.py trial_site_history.py
-gui_logic.py gui.py`
+warm_connections.py gui_logic.py gui.py`
 is the only pre-flight check currently used before committing changes
 (`gui.py` itself imports `tkinter`, which may not be installed in a
 headless dev environment — a `py_compile` syntax check still passes
@@ -128,7 +128,7 @@ trial-signals sources: `unittest.mock.patch` on `clinicaltrials_gov._get`,
 
 ## Architecture
 
-Thirteen modules, no application framework:
+Fourteen modules, no application framework:
 
 - **`agent/bd_agent.py`** — all four pipelines, plus everything shared
   between them (Hunter enrichment, email drafting, report/CSV rendering):
@@ -993,6 +993,116 @@ confirmed" when its search budget ran out mid-task). Any prompt edit should
 preserve this behavior rather than optimize for always returning a
 complete-looking report.
 
+### Warm-path connection matching (module built, not yet wired into any pipeline)
+
+`agent/warm_connections.py` — cross-references the user's own LinkedIn
+connections against a target company's employee roster, so outreach can
+start from wherever a personal connection already exists rather than
+always going in cold to whoever looks like the decision-maker. Design
+arrived at in conversation with the user (not this session's own
+back-and-forth — an earlier planning conversation the user pasted in):
+
+- **No LinkedIn scraping, by anyone, ever.** Scraping LinkedIn (directly,
+  or by having an agent browse it) violates LinkedIn's Terms of Service
+  and they actively block it technically — this was the first thing ruled
+  out. The only LinkedIn data this module touches is the user's own
+  connections list, exported through LinkedIn's own official data-export
+  tool (Settings & Privacy -> Data privacy -> "Get a copy of your data" ->
+  Connections) — the user's own data, which LinkedIn explicitly provides
+  for download. `warm_connections.py` never makes a network call to
+  linkedin.com at all; it only ever reads a CSV file the user already has.
+- **Hunter.io does not do this.** The user already has a Hunter account/API
+  key wired into this tool, and asked directly whether Hunter offers
+  relationship-mapping — it doesn't. Hunter's Domain Search/Discover find
+  emails and B2B company/contact data; it has no visibility into who
+  already knows whom. (Sales Navigator's TeamLink feature and paid
+  relationship-mapping tools like Clay/Apollo/Crossbeam do this natively,
+  and are worth considering as an alternative to a custom-built matcher —
+  noted for the user, not evaluated further here.)
+- **The decision-maker isn't necessarily the target.** A strong personal
+  connection to anyone at the target company can become an internal
+  referral path to the actual decision-maker — often a better entry point
+  than a cold approach straight to the top title. So matching is done
+  across the target company's whole employee roster, not just a presumed
+  CEO/CMO contact, and `render_report()`/whatever surfaces this later
+  should not silently sort by seniority.
+- **No invented connection-strength score.** LinkedIn's connections export
+  gives only: current company, current title, and the date connected —
+  no interaction history, no message count, no mutual-connection count.
+  Any richer "connection strength" score would be fabricated, which
+  breaks this tool's anti-fabrication discipline (see "Anti-fabrication is
+  load-bearing" above). `find_warm_paths()` reports plain facts (this
+  person is a 1st-degree connection, in this role, connected since this
+  date) and leaves judgment to the human — the same restraint
+  `hunter_contacts.py` already applies to Hunter's own confidence scores.
+- **Matching is exact, not fuzzy** (`_normalize_company()` only strips
+  common legal suffixes like ", Inc."/" LLC" and normalizes case/
+  punctuation) — a wrong fuzzy match would surface a stranger at a
+  similarly-named company as a false warm path into the real target,
+  which is worse than missing a real match.
+- `load_linkedin_connections()` scans for the real "First Name,Last
+  Name,..." header row rather than assuming it's line 1 — LinkedIn
+  prepends several lines of boilerplate notes to the export, and a fixed
+  line-offset would silently break the moment LinkedIn changes how many
+  note lines it prepends (same class of bug as `pr_wire_feeds.py`'s
+  stale-feed-URL lesson). Raises `ValueError` if the header truly can't be
+  found, rather than silently returning zero connections and looking
+  indistinguishable from "no matches."
+- `find_warm_paths_for_leads(connections, leads)` is the convenience entry
+  point for a whole run — takes this run's lead dicts (any signal type,
+  from any search) and returns `{lead_index: [WarmPath, ...]}` for every
+  lead with at least one match.
+
+**Not yet wired into any pipeline** — deliberately, since how it should
+surface is itself an open question (a report section per lead? a new
+opt-in CLI flag/GUI field for the connections CSV path, applied across all
+four searches, or just some? does it belong in the HubSpot sync as a
+note on the Contact/Company once that's built?) rather than something to
+lock in silently. Built and tested standalone with `unittest.mock`-free
+fabricated CSV data (real LinkedIn export shape, including the
+boilerplate header lines) — see the git history for the test script
+pattern. Confirm the integration shape with the user before wiring it in.
+
+**Related, already covered — don't duplicate:** the user separately asked
+about a "competitor dissatisfaction" module (public complaints, negative
+reviews, social posts about a competitor) from the same planning
+conversation; this already exists as the `vendor_switch_signal` signal
+type in the signal-sweep search (see "Signal sweep search" above) —
+confirmed with the user, no new module needed for this.
+
+### HubSpot sync (planned, waiting on user-provided credentials)
+
+Not yet built. Planned design (from CLAUDE.md's original "Known gaps"
+entry, refined further in conversation): when a lead is drafted, create/
+update it as a Contact + Company in HubSpot with an "Outreach Status"
+property (`Contacted` initially); before future research runs, exclude
+companies already marked `Declined` in HubSpot (deliberately narrower than
+"ever contacted" — a `No Response` company should still be able to
+resurface for a later follow-up).
+
+**Credential path: a HubSpot "Legacy private app" access token, not a
+Private App (deprecated) or a Project-based/OAuth app.** HubSpot's app
+creation UI changed in 2026 — "Private Apps" as a standalone menu item is
+gone, replaced by three options: **Legacy app**, **Project**, and **MCP
+auth app**. Only "Legacy app" -> "Private App" still issues a simple,
+permanent static access token (`pat-...`) suitable for this tool's stdlib-
+`urllib` REST-call pattern (same shape as `hunter_contacts.py`'s API key —
+no OAuth flow, no refresh tokens). "Project" apps use OAuth instead and
+don't hand back a reusable static token the same way — real added
+complexity (a local CLI, an OAuth redirect flow, token refresh handling)
+for no benefit to a standalone script like this one. "MCP auth app" is for
+connecting an AI agent directly to HubSpot over Model Context Protocol —
+a different integration shape entirely (this Claude Code session talking
+to HubSpot live), not a credential `bd_agent.py` itself can use later,
+unattended, when the user runs a report.
+
+Waiting on the user to provide: the Legacy Private App access token
+(scopes needed: `crm.objects.contacts.read`/`.write`,
+`crm.objects.companies.read`/`.write`), the "Outreach Status" property's
+**internal name** (not its display label — HubSpot's API needs the
+internal name and the two can differ), and whether that property should
+live on the Contact object, the Company object, or both.
+
 ### Known gaps (not yet implemented)
 
 - `email_drafts.py`'s outbox-drafts feature (see its own section above)
@@ -1041,16 +1151,17 @@ complete-looking report.
   presence may still come back with no confirmed contact. This is a data
   availability limit, not a bug; the report should say "not confirmed"
   rather than papering over it.
-- Output is a flat Markdown file; no HubSpot integration yet. Planned
-  design (not yet built): when a lead is drafted, create/update it as a
-  Contact + Company in HubSpot with an "Outreach Status" property
-  (`Contacted` initially); before future research runs, exclude companies
-  already marked `Declined` in HubSpot (deliberately narrower than "ever
-  contacted" — a `No Response` company should still be able to resurface
-  for a later follow-up). Actual email sending and reply tracking are
-  intended to go through Outlook (desktop, via `pywin32` COM automation —
-  no new credentials needed) with HubSpot's native inbox-connection
-  feature handling conversation logging, not custom code.
+- Output is a flat Markdown file; no HubSpot integration yet — see
+  "HubSpot sync (planned, waiting on user-provided credentials)" above for
+  the full design and exactly what's being waited on. Actual email sending
+  and reply tracking are intended to go through Outlook (desktop, via
+  `pywin32` COM automation — no new credentials needed) with HubSpot's
+  native inbox-connection feature handling conversation logging, not
+  custom code.
+- `agent/warm_connections.py` (LinkedIn-connections-vs-target-company
+  warm-path matching) is built and tested standalone but not wired into
+  any pipeline yet — see "Warm-path connection matching" above for why
+  and what's still an open question.
 - `run_windows.bat.example` (copy to `run_windows.bat`, fill in real keys,
   gitignored) is a secondary CLI-launcher path, superseded by `gui.py` as
   the primary interface — added after `set` env vars in PowerShell
