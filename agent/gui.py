@@ -36,6 +36,7 @@ import tkinter as tk
 from tkinter import messagebox, scrolledtext, ttk
 
 import conference_dates
+import hubspot_sync
 from bd_agent import validate_outbox_args
 from gui_logic import (
     CONFERENCE_DATES_CACHE_PATH,
@@ -131,6 +132,25 @@ class App(tk.Tk):
         )
         self.outbox_drafts_folder_var = tk.StringVar(value=self.config_data.get("outbox_drafts_folder", "Drafts"))
         ttk.Entry(outbox_frame, textvariable=self.outbox_drafts_folder_var, width=60).grid(row=3, column=1, **pad)
+
+        hubspot_frame = ttk.LabelFrame(
+            self,
+            text="HubSpot (optional — syncs each new lead as a Contact + Company, and skips companies "
+            "already marked Declined)",
+        )
+        hubspot_frame.pack(fill="x", **pad)
+
+        ttk.Label(hubspot_frame, text="HubSpot Private App access token:").grid(row=0, column=0, sticky="w", **pad)
+        self.hubspot_api_key_var = tk.StringVar(value=self.config_data.get("hubspot_api_key", ""))
+        ttk.Entry(hubspot_frame, textvariable=self.hubspot_api_key_var, show="*", width=60).grid(row=0, column=1, **pad)
+
+        ttk.Label(hubspot_frame, text='"Outreach Status" property internal name (Contact + Company):').grid(
+            row=1, column=0, sticky="w", **pad
+        )
+        self.hubspot_outreach_property_var = tk.StringVar(
+            value=self.config_data.get("hubspot_outreach_property", hubspot_sync.DEFAULT_OUTREACH_PROPERTY)
+        )
+        ttk.Entry(hubspot_frame, textvariable=self.hubspot_outreach_property_var, width=60).grid(row=1, column=1, **pad)
 
         params_frame = ttk.LabelFrame(self, text="Search parameters")
         params_frame.pack(fill="x", **pad)
@@ -257,6 +277,8 @@ class App(tk.Tk):
         form["outbox_app_password"] = self.outbox_app_password_var.get()
         form["outbox_imap_host"] = self.outbox_imap_host_var.get()
         form["outbox_drafts_folder"] = self.outbox_drafts_folder_var.get()
+        form["hubspot_api_key"] = self.hubspot_api_key_var.get()
+        form["hubspot_outreach_property"] = self.hubspot_outreach_property_var.get()
         return form
 
     def _save_form(self, form: dict) -> None:

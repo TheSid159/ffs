@@ -108,7 +108,7 @@ python bd_agent.py signal-sweep \
 There is no test suite, linter, or build step — `python -m py_compile
 bd_agent.py hunter_contacts.py seen_leads.py clinicaltrials_gov.py
 sec_edgar.py pr_wire_feeds.py sponsor_phase_history.py trial_site_history.py
-warm_connections.py gui_logic.py gui.py`
+warm_connections.py hubspot_sync.py gui_logic.py gui.py`
 is the only pre-flight check currently used before committing changes
 (`gui.py` itself imports `tkinter`, which may not be installed in a
 headless dev environment — a `py_compile` syntax check still passes
@@ -128,7 +128,7 @@ trial-signals sources: `unittest.mock.patch` on `clinicaltrials_gov._get`,
 
 ## Architecture
 
-Fourteen modules, no application framework:
+Fifteen modules, no application framework:
 
 - **`agent/bd_agent.py`** — all four pipelines, plus everything shared
   between them (Hunter enrichment, email drafting, report/CSV rendering):
@@ -1070,15 +1070,25 @@ conversation; this already exists as the `vendor_switch_signal` signal
 type in the signal-sweep search (see "Signal sweep search" above) —
 confirmed with the user, no new module needed for this.
 
-### HubSpot sync (planned, waiting on user-provided credentials)
+### HubSpot sync (built, all four searches, opt-in via `--hubspot-api-key`)
 
-Not yet built. Planned design (from CLAUDE.md's original "Known gaps"
-entry, refined further in conversation): when a lead is drafted, create/
-update it as a Contact + Company in HubSpot with an "Outreach Status"
-property (`Contacted` initially); before future research runs, exclude
-companies already marked `Declined` in HubSpot (deliberately narrower than
-"ever contacted" — a `No Response` company should still be able to
-resurface for a later follow-up).
+`agent/hubspot_sync.py` implements the design from CLAUDE.md's original
+"Known gaps" entry: when a lead is drafted, create/update it as a Company
+(+ Contact, if Hunter confirmed an email, associated to that Company) in
+HubSpot with an "Outreach Status" property set to `Contacted`; before
+writing the report, exclude leads whose company is already marked
+`Declined` in HubSpot (deliberately narrower than "ever contacted" — a
+`No Response` company should still be able to resurface for a later
+follow-up — see `is_company_declined()`/`split_declined()`).
+
+Entirely optional, same posture as `email_drafts.py`'s outbox integration:
+only runs if `--hubspot-api-key` is set (env: `HUBSPOT_API_KEY`); nothing
+changes if it's never provided. Wired into `_finalize_and_write()` in both
+`bd_agent.py` and `gui_logic.py`, right after the seen-leads dedup step
+(Declined-check, before Hunter enrichment — so a declined company never
+consumes a Hunter lookup either) and right after outbox drafts (the actual
+sync push, since by then `enriched` has the Hunter contact each Contact
+record should carry).
 
 **Credential path: a HubSpot "Legacy private app" access token, not a
 Private App (deprecated) or a Project-based/OAuth app.** HubSpot's app
@@ -1096,12 +1106,29 @@ a different integration shape entirely (this Claude Code session talking
 to HubSpot live), not a credential `bd_agent.py` itself can use later,
 unattended, when the user runs a report.
 
-Waiting on the user to provide: the Legacy Private App access token
-(scopes needed: `crm.objects.contacts.read`/`.write`,
-`crm.objects.companies.read`/`.write`), the "Outreach Status" property's
-**internal name** (not its display label — HubSpot's API needs the
-internal name and the two can differ), and whether that property should
-live on the Contact object, the Company object, or both.
+**`--hubspot-outreach-property` (env: `HUBSPOT_OUTREACH_PROPERTY`) defaults
+to `outreach_status`** — HubSpot's auto-generated internal name for a
+property labeled "Outreach Status" when there's no naming collision on the
+account. The user's actual Contact and Company properties can end up with
+different internal names (HubSpot generates them independently per
+object), so this default is a starting point, not a confirmed value — the
+same one flag is used for both objects, on the assumption they match;
+if the user's account gave them different internal names, this would need
+to become two separate flags. Not yet corrected against the user's real
+HubSpot account.
+
+The API endpoint shapes (CRM v3 objects search/create/update, and the v4
+"default association" shorthand for linking a Contact to a Company) are
+confirmed against HubSpot's own developer-docs conventions, which have
+been stable for years — but this dev sandbox's network policy blocks
+`api.hubapi.com` outright (like every other external API touched this
+session), so none of this has been exercised against a live account yet.
+Built and tested here with `unittest.mock.patch` on `hubspot_sync._request()`
+using fabricated responses, including a full mocked run of
+`_run_trial_signals_cli()` proving the Declined-exclusion and sync steps
+both fire correctly end to end; a real run should be checked once by the
+user before relying on it, same as every other new integration added to
+this tool.
 
 ### Known gaps (not yet implemented)
 
@@ -1151,13 +1178,13 @@ live on the Contact object, the Company object, or both.
   presence may still come back with no confirmed contact. This is a data
   availability limit, not a bug; the report should say "not confirmed"
   rather than papering over it.
-- Output is a flat Markdown file; no HubSpot integration yet — see
-  "HubSpot sync (planned, waiting on user-provided credentials)" above for
-  the full design and exactly what's being waited on. Actual email sending
-  and reply tracking are intended to go through Outlook (desktop, via
-  `pywin32` COM automation — no new credentials needed) with HubSpot's
-  native inbox-connection feature handling conversation logging, not
-  custom code.
+- HubSpot sync is built (see "HubSpot sync" above) but not yet verified
+  against a live account, and `--hubspot-outreach-property` assumes
+  Contact and Company share the same internal name — correct this once
+  the user confirms both. Actual email sending and reply tracking are
+  still intended to go through Outlook (desktop, via `pywin32` COM
+  automation — no new credentials needed) with HubSpot's native
+  inbox-connection feature handling conversation logging, not custom code.
 - `agent/warm_connections.py` (LinkedIn-connections-vs-target-company
   warm-path matching) is built and tested standalone but not wired into
   any pipeline yet — see "Warm-path connection matching" above for why

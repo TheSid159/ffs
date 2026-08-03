@@ -11,6 +11,7 @@ from pathlib import Path
 import bd_agent
 import conference_dates
 import email_drafts
+import hubspot_sync
 import seen_leads
 
 
@@ -91,6 +92,17 @@ def _outbox_fields(form: dict) -> dict:
     )
 
 
+def _hubspot_fields(form: dict) -> dict:
+    """Shared HubSpot-sync fields, read the same way by all four
+    build_*_args() functions below — same sharing pattern as
+    _outbox_fields()."""
+    return dict(
+        hubspot_api_key=form.get("hubspot_api_key", "").strip() or None,
+        hubspot_outreach_property=form.get("hubspot_outreach_property", "").strip()
+        or hubspot_sync.DEFAULT_OUTREACH_PROPERTY,
+    )
+
+
 def build_conference_args(form: dict) -> argparse.Namespace:
     """Build the Namespace for the conference search (bd_agent.run_research()
     and friends) from a plain dict of GUI form values. Raises ValueError on
@@ -126,6 +138,7 @@ def build_conference_args(form: dict) -> argparse.Namespace:
         seen_file=str(app_dir() / "seen_leads.json"),
         no_dedup=False,
         **_outbox_fields(form),
+        **_hubspot_fields(form),
     )
 
 
@@ -159,6 +172,7 @@ def build_trial_signals_args(form: dict) -> argparse.Namespace:
         no_secedgar=False,
         no_prwire=False,
         **_outbox_fields(form),
+        **_hubspot_fields(form),
     )
 
 
@@ -195,6 +209,7 @@ def build_phase_transition_args(form: dict) -> argparse.Namespace:
         site_history_file=str(app_dir() / "trial_site_history.json"),
         no_dedup=False,
         **_outbox_fields(form),
+        **_hubspot_fields(form),
     )
 
 
@@ -231,14 +246,16 @@ def build_signal_sweep_args(form: dict) -> argparse.Namespace:
         seen_file=str(app_dir() / "signal_sweep_seen_leads.json"),
         no_dedup=False,
         **_outbox_fields(form),
+        **_hubspot_fields(form),
     )
 
 
 def _finalize_and_write(
     preamble: str, leads: list, excluded: list, args: argparse.Namespace, raw_response=None, known_leads=None
 ) -> Path:
-    """Shared dedup -> Hunter enrich -> render -> write tail for all four
-    GUI pipelines below — mirrors bd_agent.py's `_finalize_and_write()` but
+    """Shared dedup -> HubSpot Declined-check -> Hunter enrich -> outbox
+    drafts -> HubSpot sync -> render -> write tail for all four GUI
+    pipelines below — mirrors bd_agent.py's `_finalize_and_write()` but
     returns the report path instead of just printing it (see gui.py/
     gui_logic.py's module-split rationale in CLAUDE.md). `known_leads` is
     only ever set by the phase-transition pipeline."""
@@ -273,6 +290,16 @@ def _finalize_and_write(
         if repeat_leads:
             print(f"\n[{len(repeat_leads)} of {len(leads)} lead(s) already appeared in a previous report — skipping them.]")
 
+    if args.hubspot_api_key and new_leads:
+        new_leads, declined_leads = hubspot_sync.split_declined(
+            new_leads, args.hubspot_api_key, args.hubspot_outreach_property
+        )
+        if declined_leads:
+            print(
+                f"\n[{len(declined_leads)} lead(s) excluded — company already marked "
+                f"Declined in HubSpot: {', '.join(d.get('company_name') or 'Unknown' for d in declined_leads)}]"
+            )
+
     if args.hunter_api_key:
         print(f"\n\nLooking up {len(new_leads)} contact(s) via Hunter.io...")
     enriched = bd_agent.enrich_contacts(
@@ -292,6 +319,15 @@ def _finalize_and_write(
         print(f"[{successes} draft(s) created in {args.outbox_email} — sitting unsent, review before sending]")
         if draft_failures:
             print(f"\n[Warning: {len(draft_failures)} draft(s) FAILED to create — first error: {draft_failures[0][1]}]")
+
+    if args.hubspot_api_key:
+        print(f"\nSyncing {len(enriched)} lead(s) to HubSpot...")
+        hubspot_successes, hubspot_failures = hubspot_sync.push_leads_to_hubspot(
+            enriched, args.hubspot_api_key, args.hubspot_outreach_property
+        )
+        print(f"[{hubspot_successes} lead(s) synced to HubSpot as {hubspot_sync.CONTACTED_VALUE}]")
+        if hubspot_failures:
+            print(f"\n[Warning: {len(hubspot_failures)} lead(s) FAILED to sync to HubSpot — first error: {hubspot_failures[0][1]}]")
 
     report = bd_agent.render_report(
         preamble,

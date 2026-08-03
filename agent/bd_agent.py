@@ -55,6 +55,7 @@ import anthropic
 import clinicaltrials_gov
 import conferences
 import email_drafts
+import hubspot_sync
 import hunter_contacts
 import pr_wire_feeds
 import sec_edgar
@@ -1377,6 +1378,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help='IMAP folder name to create drafts in (default: "Drafts"). Gmail accounts typically need '
         '"[Gmail]/Drafts" instead — check your account if drafts don\'t show up where expected.',
     )
+    common.add_argument(
+        "--hubspot-api-key",
+        default=os.environ.get("HUBSPOT_API_KEY"),
+        help="HubSpot Legacy Private App access token (env: HUBSPOT_API_KEY). Optional — omit to skip "
+        "HubSpot entirely (nothing changes from today). When set, every new lead is synced to HubSpot "
+        "as a Company (+ Contact if Hunter confirmed an email) tagged Outreach Status = Contacted, and "
+        "leads whose company is already marked Declined in HubSpot are excluded from the report.",
+    )
+    common.add_argument(
+        "--hubspot-outreach-property",
+        default=os.environ.get("HUBSPOT_OUTREACH_PROPERTY", hubspot_sync.DEFAULT_OUTREACH_PROPERTY),
+        help="Internal name (not display label) of the HubSpot 'Outreach Status' custom property "
+        f"(default: {hubspot_sync.DEFAULT_OUTREACH_PROPERTY!r}, HubSpot's auto-generated internal name "
+        "for that label — override if yours came out different). Used on both Contact and Company.",
+    )
 
     conf_parser = subparsers.add_parser(
         "conferences",
@@ -1501,15 +1517,18 @@ def _finalize_and_write(
     raw_response: Optional[str] = None,
     known_leads: Optional[list] = None,
 ) -> None:
-    """Shared dedup -> Hunter enrich -> render -> write tail for all four
-    CLI subcommands — only the research step before this differs between
-    them. `raw_response` is only ever set by the conference/phase-transition/
-    signal-sweep searches (the fallback text written if Claude's response
-    couldn't be parsed as structured leads); the trial-signals search has no
-    such raw text to fall back to. `known_leads` is only ever set by the
-    phase-transition search — the free trial-signals findings it was given
-    as context (see _run_phase_transitions_cli()) — shown in the report for
-    transparency even when Claude's own leads list is empty.
+    """Shared dedup -> HubSpot Declined-check -> Hunter enrich -> outbox
+    drafts -> HubSpot sync -> render -> write tail for all four CLI
+    subcommands — only the research step before this differs between them.
+    The HubSpot steps are both no-ops unless `--hubspot-api-key` is set
+    (see hubspot_sync.py). `raw_response` is only ever set by the
+    conference/phase-transition/signal-sweep searches (the fallback text
+    written if Claude's response couldn't be parsed as structured leads);
+    the trial-signals search has no such raw text to fall back to.
+    `known_leads` is only ever set by the phase-transition search — the
+    free trial-signals findings it was given as context (see
+    _run_phase_transitions_cli()) — shown in the report for transparency
+    even when Claude's own leads list is empty.
     """
     out_path = Path(args.output)
 
@@ -1551,6 +1570,17 @@ def _finalize_and_write(
                 file=sys.stderr,
             )
 
+    if args.hubspot_api_key and new_leads:
+        new_leads, declined_leads = hubspot_sync.split_declined(
+            new_leads, args.hubspot_api_key, args.hubspot_outreach_property
+        )
+        if declined_leads:
+            print(
+                f"[{len(declined_leads)} lead(s) excluded — company already marked "
+                f"Declined in HubSpot: {', '.join(d.get('company_name') or 'Unknown' for d in declined_leads)}]",
+                file=sys.stderr,
+            )
+
     print(f"\n\nLooking up {len(new_leads)} contact(s) via Hunter.io..." if args.hunter_api_key else "", file=sys.stderr)
     enriched = enrich_contacts(new_leads, args.hunter_api_key, args.hunter_min_confidence, args.hunter_delay_ms / 1000)
 
@@ -1571,6 +1601,19 @@ def _finalize_and_write(
             print(
                 f"[Warning: {len(draft_failures)} draft(s) FAILED to create — "
                 f"first error: {draft_failures[0][1]}]",
+                file=sys.stderr,
+            )
+
+    if args.hubspot_api_key:
+        print(f"\nSyncing {len(enriched)} lead(s) to HubSpot...", file=sys.stderr)
+        hubspot_successes, hubspot_failures = hubspot_sync.push_leads_to_hubspot(
+            enriched, args.hubspot_api_key, args.hubspot_outreach_property
+        )
+        print(f"[{hubspot_successes} lead(s) synced to HubSpot as {hubspot_sync.CONTACTED_VALUE}]", file=sys.stderr)
+        if hubspot_failures:
+            print(
+                f"[Warning: {len(hubspot_failures)} lead(s) FAILED to sync to HubSpot — "
+                f"first error: {hubspot_failures[0][1]}]",
                 file=sys.stderr,
             )
 
