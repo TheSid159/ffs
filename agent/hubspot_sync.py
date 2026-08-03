@@ -209,7 +209,16 @@ def sync_lead(
     name/address — same anti-fabrication discipline as email_drafts.py's
     outbox integration.
 
-    Returns {"company_id": ...} or {"company_id": ..., "contact_id": ...}.
+    The Contact upsert is best-effort: if it fails (e.g. the Outreach
+    Status property doesn't exist yet on the Contact object, only on
+    Company), that's reported via "contact_error" rather than raised —
+    the Company upsert above already succeeded and is a real, useful
+    result on its own, and shouldn't be discarded just because the
+    Contact side isn't fully set up. See push_leads_to_hubspot(), which
+    still counts this as a success as long as the Company synced.
+
+    Returns {"company_id": ...}, optionally with "contact_id" and/or
+    "contact_error".
     """
     domain = lead.get("company_domain")
     if not domain:
@@ -221,24 +230,34 @@ def sync_lead(
     if email:
         contact_name = getattr(contact, "name", None) or ""
         first, _, last = contact_name.partition(" ")
-        contact_id = upsert_contact(email, first or None, last or None, api_key, outreach_property, status)
-        result["contact_id"] = contact_id
-        associate_contact_with_company(contact_id, result["company_id"], api_key)
+        try:
+            contact_id = upsert_contact(email, first or None, last or None, api_key, outreach_property, status)
+            result["contact_id"] = contact_id
+            associate_contact_with_company(contact_id, result["company_id"], api_key)
+        except HubSpotAPIError as exc:
+            result["contact_error"] = str(exc)
     return result
 
 
 def push_leads_to_hubspot(enriched_leads: list, api_key: str, outreach_property: str = DEFAULT_OUTREACH_PROPERTY) -> tuple:
     """Sync every lead in `enriched_leads` (a list of (lead, contact)
     tuples, same shape used throughout this tool) to HubSpot. Returns
-    (success_count, [(lead, error_message), ...]) — one lead's sync
-    failing doesn't stop the rest from being attempted, same pattern as
-    email_drafts.push_drafts_for_report()."""
+    (success_count, [(lead, error_message), ...], [(lead, contact_error), ...])
+    — one lead's sync failing doesn't stop the rest from being attempted,
+    same pattern as email_drafts.push_drafts_for_report(). The third list
+    is soft warnings only (see sync_lead()'s "contact_error") — those
+    leads are still counted as successes, since their Company record
+    synced fine; only the Contact side didn't."""
     successes = 0
     failures = []
+    contact_warnings = []
     for lead, contact in enriched_leads:
         try:
-            if sync_lead(lead, contact, api_key, outreach_property):
+            result = sync_lead(lead, contact, api_key, outreach_property)
+            if result:
                 successes += 1
+                if result.get("contact_error"):
+                    contact_warnings.append((lead, result["contact_error"]))
         except HubSpotAPIError as exc:
             failures.append((lead, str(exc)))
-    return successes, failures
+    return successes, failures, contact_warnings

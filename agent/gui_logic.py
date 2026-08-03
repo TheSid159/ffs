@@ -322,12 +322,19 @@ def _finalize_and_write(
 
     if args.hubspot_api_key:
         print(f"\nSyncing {len(enriched)} lead(s) to HubSpot...")
-        hubspot_successes, hubspot_failures = hubspot_sync.push_leads_to_hubspot(
+        hubspot_successes, hubspot_failures, hubspot_contact_warnings = hubspot_sync.push_leads_to_hubspot(
             enriched, args.hubspot_api_key, args.hubspot_outreach_property
         )
         print(f"[{hubspot_successes} lead(s) synced to HubSpot as {hubspot_sync.CONTACTED_VALUE}]")
         if hubspot_failures:
             print(f"\n[Warning: {len(hubspot_failures)} lead(s) FAILED to sync to HubSpot — first error: {hubspot_failures[0][1]}]")
+        if hubspot_contact_warnings:
+            print(
+                f"\n[Note: {len(hubspot_contact_warnings)} lead(s) synced their Company but not their "
+                f"Contact to HubSpot — first error: {hubspot_contact_warnings[0][1]}. Likely means "
+                f"--hubspot-outreach-property ({args.hubspot_outreach_property!r}) doesn't exist on the "
+                "Contact object — check its internal name in HubSpot.]"
+            )
 
     report = bd_agent.render_report(
         preamble,
