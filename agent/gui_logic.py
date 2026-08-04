@@ -13,6 +13,7 @@ import conference_dates
 import email_drafts
 import hubspot_sync
 import seen_leads
+import warm_connections
 
 
 def app_dir() -> Path:
@@ -103,6 +104,18 @@ def _hubspot_fields(form: dict) -> dict:
     )
 
 
+def _linkedin_connections_fields(form: dict) -> dict:
+    """Shared warm-path-matching field, read the same way by all four
+    build_*_args() functions below. No GUI field for this one — it's
+    always `app_dir() / "linkedin_connections"` (a folder, not a single
+    file), so setting this up is "drop your team's LinkedIn connections
+    CSVs into that folder next to gui.py, one per person, named after
+    them" rather than something to type in. load_connections_dir()
+    already treats a missing/empty folder as "skip warm-path matching",
+    so nothing breaks if it's never created."""
+    return dict(linkedin_connections_dir=str(app_dir() / "linkedin_connections"))
+
+
 def build_conference_args(form: dict) -> argparse.Namespace:
     """Build the Namespace for the conference search (bd_agent.run_research()
     and friends) from a plain dict of GUI form values. Raises ValueError on
@@ -139,6 +152,7 @@ def build_conference_args(form: dict) -> argparse.Namespace:
         no_dedup=False,
         **_outbox_fields(form),
         **_hubspot_fields(form),
+        **_linkedin_connections_fields(form),
     )
 
 
@@ -173,6 +187,7 @@ def build_trial_signals_args(form: dict) -> argparse.Namespace:
         no_prwire=False,
         **_outbox_fields(form),
         **_hubspot_fields(form),
+        **_linkedin_connections_fields(form),
     )
 
 
@@ -210,6 +225,7 @@ def build_phase_transition_args(form: dict) -> argparse.Namespace:
         no_dedup=False,
         **_outbox_fields(form),
         **_hubspot_fields(form),
+        **_linkedin_connections_fields(form),
     )
 
 
@@ -247,6 +263,7 @@ def build_signal_sweep_args(form: dict) -> argparse.Namespace:
         no_dedup=False,
         **_outbox_fields(form),
         **_hubspot_fields(form),
+        **_linkedin_connections_fields(form),
     )
 
 
@@ -336,6 +353,11 @@ def _finalize_and_write(
                 "Contact object — check its internal name in HubSpot.]"
             )
 
+    connections = warm_connections.load_connections_dir(Path(args.linkedin_connections_dir))
+    warm_paths = warm_connections.find_warm_paths_for_leads(connections, new_leads) if connections else {}
+    if warm_paths:
+        print(f"[{len(warm_paths)} of {len(new_leads)} lead(s) have a warm-path connection — see the report for who]")
+
     report = bd_agent.render_report(
         preamble,
         enriched,
@@ -344,6 +366,7 @@ def _finalize_and_write(
         hunter_enabled=bool(args.hunter_api_key),
         repeat_leads=repeat_leads,
         known_leads=known_leads,
+        warm_paths=warm_paths,
     )
     out_path.write_text(report, encoding="utf-8")
 

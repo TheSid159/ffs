@@ -60,6 +60,7 @@ import hunter_contacts
 import pr_wire_feeds
 import sec_edgar
 import seen_leads
+import warm_connections
 
 MODEL = "claude-opus-5"
 JSON_FENCE_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
@@ -1021,6 +1022,7 @@ def render_report(
     hunter_enabled: bool,
     repeat_leads: Optional[list] = None,
     known_leads: Optional[list] = None,
+    warm_paths: Optional[dict] = None,
 ) -> str:
     # render_report() is shared by all four searches (conference, trial-signals,
     # phase-transitions, signal-sweep — see CLAUDE.md), which are separate,
@@ -1077,7 +1079,8 @@ def render_report(
         ]
     lines.append("---")
 
-    for lead, contact in enriched_leads:
+    warm_paths = warm_paths or {}
+    for i, (lead, contact) in enumerate(enriched_leads):
         signal_type = (lead.get("signal_type") or "trial_result").strip().lower()
         label = SIGNAL_LABELS.get(signal_type, "Lead")
         title = _lead_title(lead)
@@ -1140,6 +1143,17 @@ def render_report(
         else:
             lines.append("**Contact:** not publicly available")
         lines.append("")
+
+        matches = warm_paths.get(i)
+        if matches:
+            lines.append("**Warm path:**")
+            for wp in matches:
+                c = wp.connection
+                owner_label = f"{wp.owner}'s" if wp.owner else "Your"
+                title_part = f", {c.position}" if c.position else ""
+                since_part = f" — connected since {c.connected_on}" if c.connected_on else ""
+                lines.append(f"- {owner_label} connection: {c.full_name}{title_part}{since_part}")
+            lines.append("")
 
         subject, body = draft_email(lead, contact, args)
         lines.append("**Draft email:**")
@@ -1393,6 +1407,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         f"(default: {hubspot_sync.DEFAULT_OUTREACH_PROPERTY!r}, HubSpot's auto-generated internal name "
         "for that label — override if yours came out different). Used on both Contact and Company.",
     )
+    common.add_argument(
+        "--linkedin-connections-dir",
+        default=os.environ.get("LINKEDIN_CONNECTIONS_DIR", "linkedin_connections"),
+        help="Directory of LinkedIn connections export CSVs (default: linkedin_connections, next to "
+        "this script) — one file per Elevate Imaging teammate, named after them (e.g. Sarah.csv). "
+        "Optional — if the directory doesn't exist, warm-path matching is skipped entirely, nothing "
+        "else changes. Each lead's report entry shows any of your team's LinkedIn connections who "
+        "currently work at that company.",
+    )
 
     conf_parser = subparsers.add_parser(
         "conferences",
@@ -1625,6 +1648,15 @@ def _finalize_and_write(
                 file=sys.stderr,
             )
 
+    connections = warm_connections.load_connections_dir(Path(args.linkedin_connections_dir))
+    warm_paths = warm_connections.find_warm_paths_for_leads(connections, new_leads) if connections else {}
+    if warm_paths:
+        print(
+            f"[{len(warm_paths)} of {len(new_leads)} lead(s) have a warm-path connection — "
+            f"see the report for who]",
+            file=sys.stderr,
+        )
+
     report = render_report(
         preamble,
         enriched,
@@ -1633,6 +1665,7 @@ def _finalize_and_write(
         hunter_enabled=bool(args.hunter_api_key),
         repeat_leads=repeat_leads,
         known_leads=known_leads,
+        warm_paths=warm_paths,
     )
     out_path.write_text(report, encoding="utf-8")
     print(f"Saved report to {out_path.resolve()}", file=sys.stderr)

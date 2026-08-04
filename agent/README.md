@@ -132,6 +132,33 @@ or "app-specific password"), and its IMAP server address (e.g.
 Microsoft 365/Outlook). Gmail accounts also need the Drafts folder name
 changed to `[Gmail]/Drafts`.
 
+### Optional: warm-path connections (who on your team already knows someone there)
+
+Every lead in every report checks for a **warm path** — someone on your
+team who's already a LinkedIn connection at that company — before falling
+back to cold outreach. To set it up:
+
+1. Export your LinkedIn connections: **My Network -> Connections -> "..." ->
+   Export contacts** (or Settings & Privacy -> Data privacy -> "Get a copy
+   of your data" -> the full archive, if that direct export option isn't
+   available for you). LinkedIn emails you a `Connections.csv` when it's
+   ready.
+2. Put that file in a folder called `linkedin_connections` next to
+   `gui.py` (create the folder if it doesn't exist), named after you —
+   e.g. `linkedin_connections/Darren.csv`.
+3. Ask each teammate at Elevate Imaging to do the same and add their file
+   to that same folder (e.g. `linkedin_connections/Sarah.csv`) — the more
+   people's networks in there, the more warm paths get found, since the
+   best path into a company isn't necessarily your own connection.
+
+No field to fill in for this one — the report just picks it up
+automatically if the folder exists. A lead with a match gets a
+**"Warm path:"** line naming exactly who's connected and how (e.g.
+"Sarah's connection: Bob Smith, Director of Regulatory Affairs"), so you
+know who to ask for an introduction. No LinkedIn scraping is involved —
+this only ever reads the CSV files you and your team already downloaded
+directly from LinkedIn's own export tool.
+
 ## Setup
 
 1. Get an Anthropic API key from https://console.anthropic.com (Settings →

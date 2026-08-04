@@ -1021,13 +1021,13 @@ confirmed" when its search budget ran out mid-task). Any prompt edit should
 preserve this behavior rather than optimize for always returning a
 complete-looking report.
 
-### Warm-path connection matching (module built, not yet wired into any pipeline)
+### Warm-path connection matching (built and wired into all four searches)
 
-`agent/warm_connections.py` — cross-references the user's own LinkedIn
-connections against a target company's employee roster, so outreach can
-start from wherever a personal connection already exists rather than
-always going in cold to whoever looks like the decision-maker. Design
-arrived at in conversation with the user (not this session's own
+`agent/warm_connections.py` — cross-references the user's (and team's)
+LinkedIn connections against a target company's employee roster, so
+outreach can start from wherever a personal connection already exists
+rather than always going in cold to whoever looks like the decision-maker.
+Design arrived at in conversation with the user (not this session's own
 back-and-forth — an earlier planning conversation the user pasted in):
 
 - **No LinkedIn scraping, by anyone, ever.** Scraping LinkedIn (directly,
@@ -1081,15 +1081,58 @@ back-and-forth — an earlier planning conversation the user pasted in):
   from any search) and returns `{lead_index: [WarmPath, ...]}` for every
   lead with at least one match.
 
-**Not yet wired into any pipeline** — deliberately, since how it should
-surface is itself an open question (a report section per lead? a new
-opt-in CLI flag/GUI field for the connections CSV path, applied across all
-four searches, or just some? does it belong in the HubSpot sync as a
-note on the Contact/Company once that's built?) rather than something to
-lock in silently. Built and tested standalone with `unittest.mock`-free
-fabricated CSV data (real LinkedIn export shape, including the
-boilerplate header lines) — see the git history for the test script
-pattern. Confirm the integration shape with the user before wiring it in.
+**Multiple Elevate teammates' connections, not just the user's own.**
+`load_connections_dir(dir_path)` loads every `*.csv` file in a directory,
+tagging each `Connection` with `owner` (the filename stem — e.g.
+`Sarah.csv` -> `owner="Sarah"`), so the whole team's networks combine into
+one pool: the best warm path into a target company isn't necessarily the
+user's personal connection (see the "decision-maker isn't necessarily the
+target" point above — same reasoning extends to *whose* network the path
+comes from, not just which person at the target company it lands on). A
+missing directory returns `[]` (this feature is entirely opt-in — no
+folder, no matching, nothing else changes) and one malformed CSV in the
+directory doesn't stop the others from loading (a warning is printed for
+it, matching `pr_wire_feeds.py`'s per-source-failure posture).
+
+**Wired into `_finalize_and_write()` in both `bd_agent.py` and
+`gui_logic.py`**, right before `render_report()`: connections are loaded
+from `--linkedin-connections-dir` (CLI; default `linkedin_connections`,
+env `LINKEDIN_CONNECTIONS_DIR`) or, in the GUI, always
+`app_dir() / "linkedin_connections"` — deliberately **no GUI field** for
+this one, since the setup step is "drop your team's LinkedIn exports into
+that folder, named after each person" rather than something to type a
+path for. `render_report()` takes a new `warm_paths` dict
+(`{lead_index: [WarmPath, ...]}`) and renders a **"Warm path:"** bullet
+list per matching lead, between the Contact block and the Draft email —
+each line shows whose connection it is ("Sarah's connection: Bob Smith,
+Director of Regulatory Affairs — connected since 02 Jan 2023"), never
+just "a connection exists," so the human doing outreach knows exactly who
+to ask for an intro.
+
+**Deliberately still company-name-text matching only, not a Hunter/Claude
+employee-roster cross-check.** The user asked whether Hunter or Claude
+could pull a full employee roster for a target company and cross-reference
+it against the team's connections by name — considered and intentionally
+not built: the only way to link a roster (from Hunter/Claude, which has no
+LinkedIn URL or email in common with the connections export) to a LinkedIn
+connection is matching on **name alone**, and common names create real
+false-positive risk ("the John Smith at the company" isn't necessarily
+"your John Smith") — the same anti-fabrication principle that already
+governs `_normalize_company()`'s deliberately-non-fuzzy matching above. The
+existing company-name-in-the-connections-export approach doesn't have this
+problem, since it only ever matches a connection against their own
+self-reported current employer, not a separately-sourced roster. If
+roster-based name matching is wanted later, it should be a clearly
+separate, lower-confidence "possible match — unverified" tier, never
+blended into the same list as a direct match.
+
+Tested with fabricated multi-owner CSV data (including a full mocked run
+of `_run_trial_signals_cli()` proving the "Warm path" section renders
+correctly, only for matching leads, with the right owner attribution) —
+see the git history for the test pattern. Also validated directly against
+the user's real LinkedIn export (612 real connections parsed with no
+errors; spot-checked matches against real companies, including 15 warm
+paths to a competing imaging CRO already in the user's network).
 
 **Related, already covered — don't duplicate:** the user separately asked
 about a "competitor dissatisfaction" module (public complaints, negative
@@ -1241,10 +1284,11 @@ it.
   still intended to go through Outlook (desktop, via `pywin32` COM
   automation — no new credentials needed) with HubSpot's native
   inbox-connection feature handling conversation logging, not custom code.
-- `agent/warm_connections.py` (LinkedIn-connections-vs-target-company
-  warm-path matching) is built and tested standalone but not wired into
-  any pipeline yet — see "Warm-path connection matching" above for why
-  and what's still an open question.
+- `agent/warm_connections.py` is now wired into all four report pipelines
+  (see "Warm-path connection matching" above) — the remaining open piece
+  is HubSpot owner-assignment (auto-setting a lead's Company owner in
+  HubSpot to whichever teammate has the warm path), proposed by the user
+  but not yet built.
 - `run_windows.bat.example` (copy to `run_windows.bat`, fill in real keys,
   gitignored) is a secondary CLI-launcher path, superseded by `gui.py` as
   the primary interface — added after `set` env vars in PowerShell

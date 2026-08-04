@@ -70,8 +70,12 @@ class WarmPath:
     connection: Connection
     matched_company_name: str  # the target-company name this was matched against, as given by the caller
 
+    @property
+    def owner(self) -> str:
+        return self.connection.owner
 
-def load_linkedin_connections(csv_path: Path) -> list:
+
+def load_linkedin_connections(csv_path: Path, owner: str = "") -> list:
     """Parse a LinkedIn "Connections.csv" export.
 
     LinkedIn prepends several lines of boilerplate notes before the actual
@@ -82,6 +86,11 @@ def load_linkedin_connections(csv_path: Path) -> list:
     bug as pr_wire_feeds.py's stale-feed-URL lesson (see CLAUDE.md).
     Raises ValueError if the header can't be found at all, rather than
     silently returning zero connections and looking like "no matches."
+
+    `owner` tags every Connection loaded from this file — see
+    load_connections_dir(), which is how multiple Elevate teammates'
+    exports get combined into one pool while still tracking whose
+    connection each match actually is.
     """
     text = csv_path.read_text(encoding="utf-8-sig")
     lines = text.splitlines()
@@ -109,8 +118,37 @@ def load_linkedin_connections(csv_path: Path) -> list:
                 position=(row.get("Position") or "").strip() or None,
                 connected_on=(row.get("Connected On") or "").strip() or None,
                 profile_url=(row.get("URL") or "").strip() or None,
+                owner=owner,
             )
         )
+    return connections
+
+
+def load_connections_dir(dir_path: Path) -> list:
+    """Load every `*.csv` file in `dir_path` as one person's LinkedIn
+    connections export, tagged with that file's name (minus extension) as
+    `owner` — e.g. a file named `Sarah.csv` produces Connections with
+    `owner="Sarah"`. This is how multiple Elevate Imaging teammates'
+    exports combine into one pool: the best warm path into a target
+    company isn't necessarily the user's own connection, so every
+    teammate who drops their export into this folder gets checked too
+    (see CLAUDE.md's "Warm-path connection matching" for the fuller
+    rationale).
+
+    A missing directory returns an empty list — this whole feature is
+    opt-in, so "no folder yet" just means no warm-path matching this run,
+    not an error. One bad/malformed file doesn't stop the others from
+    loading: a warning is printed for it (matching pr_wire_feeds.py's
+    per-feed-failure posture) and the rest still load normally.
+    """
+    if not dir_path.is_dir():
+        return []
+    connections = []
+    for csv_path in sorted(dir_path.glob("*.csv")):
+        try:
+            connections += load_linkedin_connections(csv_path, owner=csv_path.stem)
+        except (ValueError, OSError) as exc:
+            print(f"[warm_connections: could not load {csv_path.name} — {exc}]")
     return connections
 
 
