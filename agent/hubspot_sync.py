@@ -38,6 +38,7 @@ tool.
 """
 
 import json
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -242,6 +243,31 @@ def associate_contact_with_company(contact_id: str, company_id: str, api_key: st
     _request("PUT", path, api_key)
 
 
+def create_note(body_html: str, api_key: str) -> str:
+    """Create a HubSpot Note (an Engagement) with `body_html` as its
+    content — HubSpot's Notes UI renders basic HTML (bold, links, line
+    breaks), which is why the caller builds simple HTML rather than plain
+    text. `hs_timestamp` is epoch milliseconds, the established convention
+    for the Notes/Engagements API specifically (HubSpot's newer custom
+    datetime properties accept ISO-8601 too, but Notes predates that and
+    has always used ms). Returns the note's HubSpot object ID — not yet
+    associated with anything, see associate_note_with_object()."""
+    properties = {"hs_note_body": body_html, "hs_timestamp": int(time.time() * 1000)}
+    created = _request("POST", "/crm/v3/objects/notes", api_key, {"properties": properties})
+    return created["id"]
+
+
+def associate_note_with_object(note_id: str, object_type: str, object_id: str, api_key: str) -> None:
+    """Link a Note to a Company or Contact (`object_type` is "companies"
+    or "contacts") via the same v4 "default association" endpoint used
+    for Contact-Company — same reasoning: auto-picks the correct
+    association type, no need to hardcode a numeric type ID that could
+    be wrong (e.g. NOTE-to-COMPANY and NOTE-to-CONTACT use different IDs
+    in HubSpot's older v3 associations API)."""
+    path = f"/crm/v4/objects/notes/{note_id}/associations/default/{object_type}/{object_id}"
+    _request("PUT", path, api_key)
+
+
 def sync_lead(
     lead: dict,
     contact,
@@ -250,6 +276,7 @@ def sync_lead(
     status: str = CONTACTED_VALUE,
     no_cold_call_property: Optional[str] = DEFAULT_NO_COLD_CALL_PROPERTY,
     owner_id: Optional[str] = None,
+    note_body_html: Optional[str] = None,
 ) -> dict:
     """Push one lead (+ its Hunter-enriched `contact`, if any — a
     hunter_contacts.Contact or None) to HubSpot as a Company, plus a
@@ -277,8 +304,16 @@ def sync_lead(
     Contact side isn't fully set up. See push_leads_to_hubspot(), which
     still counts this as a success as long as the Company synced.
 
-    Returns {"company_id": ...}, optionally with "contact_id" and/or
-    "contact_error".
+    `note_body_html` (built by the caller — see bd_agent._build_hubspot_note_body())
+    is attached as a HubSpot Note on the Company (and Contact, if one was
+    created) — so a salesperson opening the record sees exactly why this
+    tool surfaced it and the drafted email, not just a status label. Also
+    best-effort: a note failure is reported via "note_error", never
+    raised, since the Company/Contact upserts already succeeded on their
+    own regardless of whether the note attaches.
+
+    Returns {"company_id": ...}, optionally with "contact_id",
+    "contact_error", "note_id", and/or "note_error".
     """
     domain = lead.get("company_domain")
     if not domain:
@@ -300,6 +335,17 @@ def sync_lead(
             associate_contact_with_company(contact_id, result["company_id"], api_key)
         except HubSpotAPIError as exc:
             result["contact_error"] = str(exc)
+
+    if note_body_html:
+        try:
+            note_id = create_note(note_body_html, api_key)
+            associate_note_with_object(note_id, "companies", result["company_id"], api_key)
+            if result.get("contact_id"):
+                associate_note_with_object(note_id, "contacts", result["contact_id"], api_key)
+            result["note_id"] = note_id
+        except HubSpotAPIError as exc:
+            result["note_error"] = str(exc)
+
     return result
 
 
@@ -309,26 +355,35 @@ def push_leads_to_hubspot(
     outreach_property: str = DEFAULT_OUTREACH_PROPERTY,
     no_cold_call_property: Optional[str] = DEFAULT_NO_COLD_CALL_PROPERTY,
     owner_emails_by_index: Optional[dict] = None,
+    note_bodies_by_index: Optional[dict] = None,
 ) -> tuple:
     """Sync every lead in `enriched_leads` (a list of (lead, contact)
     tuples, same shape used throughout this tool) to HubSpot. Returns
-    (success_count, [(lead, error_message), ...], [(lead, contact_error), ...])
-    — one lead's sync failing doesn't stop the rest from being attempted,
-    same pattern as email_drafts.push_drafts_for_report(). The third list
-    is soft warnings only (see sync_lead()'s "contact_error") — those
-    leads are still counted as successes, since their Company record
-    synced fine; only the Contact side didn't.
+    (success_count, [(lead, error_message), ...], [(lead, contact_error), ...],
+    [(lead, note_error), ...]) — one lead's sync failing doesn't stop the
+    rest from being attempted, same pattern as
+    email_drafts.push_drafts_for_report(). The third and fourth lists are
+    soft warnings only (see sync_lead()'s "contact_error"/"note_error") —
+    those leads are still counted as successes, since their Company
+    record synced fine; only the Contact/Note side didn't.
 
     `owner_emails_by_index` is `{lead_index: hubspot_login_email}` (see
     warm_connections.owner_emails_for_warm_paths()) — each unique email is
     resolved to a numeric Owner ID via find_owner_id_by_email() at most
     once per call (cached), and a lookup failure or unknown email just
     means no owner gets assigned for that lead, never an error that stops
-    the sync."""
+    the sync.
+
+    `note_bodies_by_index` is `{lead_index: html_body}` (see
+    bd_agent._build_hubspot_note_body()) — attached as a HubSpot Note on
+    that lead's Company (+ Contact, if any); a lead with no entry simply
+    gets no note."""
     successes = 0
     failures = []
     contact_warnings = []
+    note_warnings = []
     owner_emails_by_index = owner_emails_by_index or {}
+    note_bodies_by_index = note_bodies_by_index or {}
     owner_id_cache: dict = {}
     for i, (lead, contact) in enumerate(enriched_leads):
         owner_id = None
@@ -342,12 +397,17 @@ def push_leads_to_hubspot(
             owner_id = owner_id_cache[owner_email]
         try:
             result = sync_lead(
-                lead, contact, api_key, outreach_property, no_cold_call_property=no_cold_call_property, owner_id=owner_id
+                lead, contact, api_key, outreach_property,
+                no_cold_call_property=no_cold_call_property,
+                owner_id=owner_id,
+                note_body_html=note_bodies_by_index.get(i),
             )
             if result:
                 successes += 1
                 if result.get("contact_error"):
                     contact_warnings.append((lead, result["contact_error"]))
+                if result.get("note_error"):
+                    note_warnings.append((lead, result["note_error"]))
         except HubSpotAPIError as exc:
             failures.append((lead, str(exc)))
-    return successes, failures, contact_warnings
+    return successes, failures, contact_warnings, note_warnings

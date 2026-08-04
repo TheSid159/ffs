@@ -12,6 +12,7 @@ import bd_agent
 import conference_dates
 import email_drafts
 import hubspot_sync
+import hunter_contacts
 import seen_leads
 import warm_connections
 
@@ -353,9 +354,21 @@ def _finalize_and_write(
         if warm_paths:
             owner_emails = warm_connections.load_owner_emails(Path(args.linkedin_connections_dir))
             owner_emails_by_index = warm_connections.owner_emails_for_warm_paths(warm_paths, owner_emails)
-        hubspot_successes, hubspot_failures, hubspot_contact_warnings = hubspot_sync.push_leads_to_hubspot(
+
+        note_bodies_by_index = {}
+        for i, (lead, contact) in enumerate(enriched):
+            other_candidates = None
+            if args.hunter_api_key and lead.get("company_domain"):
+                other_candidates = hunter_contacts.find_all_candidates(
+                    lead["company_domain"], args.hunter_api_key, args.hunter_min_confidence
+                )
+            note_bodies_by_index[i] = bd_agent._build_hubspot_note_body(
+                lead, contact, warm_paths.get(i), args, other_candidates
+            )
+
+        hubspot_successes, hubspot_failures, hubspot_contact_warnings, hubspot_note_warnings = hubspot_sync.push_leads_to_hubspot(
             enriched, args.hubspot_api_key, args.hubspot_outreach_property, args.hubspot_no_call_property,
-            owner_emails_by_index,
+            owner_emails_by_index, note_bodies_by_index,
         )
         print(f"[{hubspot_successes} lead(s) synced to HubSpot as {hubspot_sync.CONTACTED_VALUE}]")
         if owner_emails_by_index:
@@ -371,6 +384,11 @@ def _finalize_and_write(
                 f"Contact to HubSpot — first error: {hubspot_contact_warnings[0][1]}. Likely means "
                 f"--hubspot-outreach-property ({args.hubspot_outreach_property!r}) doesn't exist on the "
                 "Contact object — check its internal name in HubSpot.]"
+            )
+        if hubspot_note_warnings:
+            print(
+                f"\n[Note: {len(hubspot_note_warnings)} lead(s) synced but their HubSpot Note FAILED to "
+                f"attach — first error: {hubspot_note_warnings[0][1]}]"
             )
 
     report = bd_agent.render_report(

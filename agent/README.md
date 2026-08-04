@@ -342,6 +342,5 @@ official bill; check console.anthropic.com for exact billing.
 ## Next steps to consider
 
 - Point any search at other indications via the GUI or CLI flags.
-- Wire the output into HubSpot instead of a flat Markdown file.
 - Add a company-name-scoped lookup (today all four searches are
   indication-scoped only).

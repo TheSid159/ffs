@@ -136,3 +136,37 @@ def find_contact(
 
     except (HunterAPIError, urllib.error.URLError, json.JSONDecodeError, KeyError) as exc:
         return Contact(contact_name, None, None, None, f"error: {exc}")
+
+
+def find_all_candidates(domain: Optional[str], api_key: str, min_confidence: int = 90) -> list:
+    """Every candidate Hunter's Domain Search has on file for `domain` —
+    not filtered to CEO/CMO titles like find_contact() — so a HubSpot
+    note (or anything else) can show the fuller roster Hunter already
+    confirmed, not just the one contact picked for outreach. A separate
+    Domain Search call from find_contact()'s (Hunter doesn't expose a way
+    to reuse one call's result for two purposes), so only call this where
+    the extra usage is actually wanted — see bd_agent._build_hubspot_note_body().
+
+    Same confidence gating as find_contact(): a candidate below
+    `min_confidence` still appears (name/title), just with `.email` left
+    None rather than reported as usable — never silently upgrade an
+    unconfirmed guess into something that looks confirmed.
+    """
+    if not domain:
+        return []
+    try:
+        # Same 10-not-25 plan-cap reasoning as find_contact().
+        data = _get("domain-search", {"domain": domain, "limit": 10}, api_key)
+        candidates = (data.get("data") or {}).get("emails") or []
+    except (HunterAPIError, urllib.error.URLError, json.JSONDecodeError, KeyError):
+        return []
+
+    results = []
+    for candidate in candidates:
+        name = " ".join(filter(None, [candidate.get("first_name"), candidate.get("last_name")])) or None
+        confidence = candidate.get("confidence")
+        email = candidate.get("value")
+        if confidence is None or confidence < min_confidence:
+            email = None
+        results.append(Contact(name, candidate.get("position"), email, confidence, "domain_search"))
+    return results

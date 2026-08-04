@@ -41,6 +41,7 @@ Usage:
 
 import argparse
 import csv
+import html
 import io
 import json
 import os
@@ -1222,6 +1223,88 @@ def render_report(
     return "\n".join(lines)
 
 
+def _build_hubspot_note_body(
+    lead: dict,
+    contact,
+    warm_path_matches: Optional[list],
+    args: argparse.Namespace,
+    other_candidates: Optional[list] = None,
+) -> str:
+    """Compose the "why this landed in HubSpot" note (simple HTML, which
+    HubSpot's Notes UI renders — bold, links, line breaks) attached to the
+    Company/Contact record via hubspot_sync.sync_lead(), so opening the
+    record in HubSpot immediately shows the trigger and a ready-to-send
+    draft rather than just a status label. Same underlying content as
+    render_report()'s per-lead Markdown block, condensed for a note.
+
+    `other_candidates` (from hunter_contacts.find_all_candidates(), the
+    user's own request) lists every other Hunter-confirmed contact at
+    this company, not just the one picked for outreach — Hunter's Domain
+    Search already returns these in one call, find_contact() just
+    discards everyone but the best CEO/CMO match.
+    """
+    signal_type = (lead.get("signal_type") or "trial_result").strip().lower()
+    label = SIGNAL_LABELS.get(signal_type, "Lead")
+    company = html.escape(lead.get("company_name") or "Unknown company")
+    parts = [f"<strong>[{html.escape(label)}] {company}</strong><br>"]
+
+    if signal_type in ("trial_result", "conference_highlight"):
+        detail = lead.get("result_summary") or lead.get("signal_detail") or ""
+    else:
+        detail = lead.get("signal_detail") or ""
+    if detail:
+        parts.append(f"<strong>Signal:</strong> {html.escape(detail)}<br>")
+
+    if signal_type == "phase_transition_deep_signal" and lead.get("source_urls"):
+        parts.append("<strong>Sources:</strong><br>")
+        for url in lead["source_urls"]:
+            parts.append(f'- <a href="{html.escape(url)}">{html.escape(url)}</a><br>')
+    elif lead.get("abstract_url"):
+        source_label = "Abstract" if signal_type in ("trial_result", "conference_highlight") else "Source"
+        title = lead.get("abstract_title") or "link"
+        parts.append(f'<strong>{source_label}:</strong> <a href="{html.escape(lead["abstract_url"])}">{html.escape(title)}</a><br>')
+
+    if contact and contact.email:
+        title_part = f", {contact.title}" if contact.title else ""
+        parts.append(
+            f"<strong>Contact:</strong> {html.escape(contact.name or '')}{html.escape(title_part)} — "
+            f"{html.escape(contact.email)} (Hunter.io confidence: {contact.confidence}/100)<br>"
+        )
+    elif lead.get("contact_name"):
+        title_part = f", {lead['contact_title']}" if lead.get("contact_title") else ""
+        parts.append(f"<strong>Contact:</strong> {html.escape(lead['contact_name'])}{html.escape(title_part)} — email not confirmed<br>")
+    else:
+        parts.append("<strong>Contact:</strong> not publicly available<br>")
+
+    if other_candidates:
+        # Excludes whoever's already shown above as the primary contact,
+        # so the same person doesn't appear twice.
+        primary_email = contact.email if contact else None
+        others = [c for c in other_candidates if c.email != primary_email or not primary_email]
+        if others:
+            parts.append("<strong>Other Hunter-confirmed contacts at this company:</strong><br>")
+            for c in others:
+                title_part = f", {c.title}" if c.title else ""
+                if c.email:
+                    parts.append(f"- {html.escape(c.name or 'Unknown')}{html.escape(title_part)} — {html.escape(c.email)} ({c.confidence}/100)<br>")
+                else:
+                    parts.append(f"- {html.escape(c.name or 'Unknown')}{html.escape(title_part)} — not confirmed ({c.confidence}/100)<br>")
+
+    if warm_path_matches:
+        parts.append("<strong>Warm path:</strong><br>")
+        for wp in warm_path_matches:
+            c = wp.connection
+            owner_label = f"{wp.owner}'s" if wp.owner else "Your"
+            title_part = f", {c.position}" if c.position else ""
+            parts.append(f"- {html.escape(owner_label)} connection: {html.escape(c.full_name)}{html.escape(title_part)}<br>")
+
+    subject, body = draft_email(lead, contact, args)
+    parts.append(f"<br><strong>Draft email — Subject:</strong> {html.escape(subject)}<br>")
+    parts.append(f"<strong>Draft email — Body:</strong><br>{html.escape(body).replace(chr(10), '<br>')}")
+
+    return "".join(parts)
+
+
 CSV_FIELDNAMES = [
     "signal_type", "company_name", "company_domain", "headline", "detail",
     "source_url", "contact_name", "contact_title", "contact_email",
@@ -1654,9 +1737,26 @@ def _finalize_and_write(
         if warm_paths:
             owner_emails = warm_connections.load_owner_emails(Path(args.linkedin_connections_dir))
             owner_emails_by_index = warm_connections.owner_emails_for_warm_paths(warm_paths, owner_emails)
-        hubspot_successes, hubspot_failures, hubspot_contact_warnings = hubspot_sync.push_leads_to_hubspot(
+
+        # One extra Hunter Domain Search call per company (only when Hunter
+        # is also configured) — surfaces every Hunter-confirmed contact in
+        # the note, not just the one picked for outreach. Opt-in-stacked
+        # cost: only fires when both --hunter-api-key and --hubspot-api-key
+        # are set, and only once per lead, not per Hunter usage generally.
+        note_bodies_by_index = {}
+        for i, (lead, contact) in enumerate(enriched):
+            other_candidates = None
+            if args.hunter_api_key and lead.get("company_domain"):
+                other_candidates = hunter_contacts.find_all_candidates(
+                    lead["company_domain"], args.hunter_api_key, args.hunter_min_confidence
+                )
+            note_bodies_by_index[i] = _build_hubspot_note_body(
+                lead, contact, warm_paths.get(i), args, other_candidates
+            )
+
+        hubspot_successes, hubspot_failures, hubspot_contact_warnings, hubspot_note_warnings = hubspot_sync.push_leads_to_hubspot(
             enriched, args.hubspot_api_key, args.hubspot_outreach_property, args.hubspot_no_call_property,
-            owner_emails_by_index,
+            owner_emails_by_index, note_bodies_by_index,
         )
         print(f"[{hubspot_successes} lead(s) synced to HubSpot as {hubspot_sync.CONTACTED_VALUE}]", file=sys.stderr)
         if owner_emails_by_index:
@@ -1677,6 +1777,12 @@ def _finalize_and_write(
                 f"Contact to HubSpot — first error: {hubspot_contact_warnings[0][1]}. Likely means "
                 f"--hubspot-outreach-property ({args.hubspot_outreach_property!r}) doesn't exist on the "
                 "Contact object — check its internal name in HubSpot.]",
+                file=sys.stderr,
+            )
+        if hubspot_note_warnings:
+            print(
+                f"[Note: {len(hubspot_note_warnings)} lead(s) synced but their HubSpot Note FAILED to "
+                f"attach — first error: {hubspot_note_warnings[0][1]}]",
                 file=sys.stderr,
             )
 

@@ -1295,6 +1295,78 @@ live run yet — the one real run so far only exercised leads with no
 `company_domain` (see above), so HubSpot sync never actually fired during
 it.
 
+**Every synced lead also gets a HubSpot Note — "why this landed here."**
+Requested directly by the user after looking at a populated HubSpot
+Company record and asking for "some how to have all the relevant search
+info ... as a clickable/launchable note/document. That way someone looks
+at it, immediately can see the relevant info." `hubspot_sync.create_note()`
++ `associate_note_with_object()` create a Note (HubSpot's Engagement
+type, `POST /crm/v3/objects/notes` with `hs_note_body`/`hs_timestamp` —
+`hs_timestamp` is epoch milliseconds, the established convention for the
+Notes API specifically, confirmed via web search) and attach it to the
+Company (and Contact, if one was created) via the same v4 "default
+association" endpoint already used for Contact-Company linking — auto-
+picks the correct association type rather than hardcoding a numeric type
+ID, which differs between NOTE-to-COMPANY and NOTE-to-CONTACT in HubSpot's
+older v3 associations API.
+
+`bd_agent._build_hubspot_note_body(lead, contact, warm_path_matches, args,
+other_candidates=None)` composes the note body as simple HTML (bold,
+links, line breaks — what HubSpot's Notes UI actually renders), covering
+the same ground as `render_report()`'s per-lead Markdown block condensed
+into one note: the signal type/company/detail, the source URL(s) (every
+URL for `phase_transition_deep_signal`, same as the report), the primary
+contact Hunter confirmed (or "not publicly available"), any warm-path
+connection, and the full drafted email subject+body — so opening the
+record in HubSpot shows the trigger and a ready-to-send draft immediately,
+not just a status label. Every piece of lead/contact/company text is run
+through `html.escape()` before being embedded, since it's all free text
+Claude or Hunter returned and could in principle contain characters that
+would otherwise break the note's HTML.
+
+**Other Hunter-confirmed contacts, not just the one picked for outreach —
+the user's own follow-up request** ("any Hunter confirmed employee can get
+pulled in?"). `hunter_contacts.find_all_candidates(domain, api_key,
+min_confidence=90) -> list[Contact]` returns every candidate Hunter's
+Domain Search has on file for a domain, not filtered down to a single
+CEO/CMO match the way `find_contact()` is — same confidence gating
+(`.email` only populated at/above `min_confidence`, otherwise shown as
+"not confirmed (score/100)" rather than silently dropped, same
+anti-fabrication posture as everywhere else in this tool). This costs one
+*extra* Hunter Domain Search call per lead beyond the existing
+`find_contact()` call, since Hunter doesn't expose a way to reuse one
+call's result for two purposes — so it only fires when both
+`--hunter-api-key` and `--hubspot-api-key` are set (see
+`_finalize_and_write()`'s `note_bodies_by_index` loop in both
+`bd_agent.py` and `gui_logic.py`), and only once per lead, not per Hunter
+usage generally. `_build_hubspot_note_body()` excludes whoever's already
+shown as the primary contact from this "other contacts" list so the same
+person never appears twice in one note.
+
+**Best-effort, same posture as the Contact-side sync.** `sync_lead()`
+gained a `note_body_html` parameter; note creation/association is wrapped
+in its own try/except reporting `note_error` rather than raising — a
+Notes-API failure never discards an already-successful Company/Contact
+upsert. `push_leads_to_hubspot()` now returns a 4-tuple, `(successes,
+failures, contact_warnings, note_warnings)` — anywhere this function is
+called (`bd_agent.py`, `gui_logic.py`, and any test) needs updating for
+the extra return value. A lead with no `note_body_html` entry in
+`note_bodies_by_index` never touches the Notes API at all — this stays a
+strict opt-in add-on to HubSpot sync, not a required part of it.
+
+Tested with `unittest.mock.patch` on `hubspot_sync._request()`:
+`create_note()`/`associate_note_with_object()` in isolation, `sync_lead()`
+creating a note and associating it with both Company and Contact, note
+failure being best-effort (Company/Contact still succeed and are still
+counted a success), `push_leads_to_hubspot()` threading
+`note_bodies_by_index` through and reporting `note_warnings`, and
+confirming the Notes API is never called when no note body is supplied.
+Also tested `find_all_candidates()`'s confidence gating and
+`_build_hubspot_note_body()`'s HTML escaping (including an explicit
+`<script>` XSS-shaped input) and primary-contact dedup. Not yet confirmed
+against a live account — same posture as the rest of HubSpot sync's
+unverified pieces above.
+
 ### Known gaps (not yet implemented)
 
 - `email_drafts.py`'s outbox-drafts feature (see its own section above)
@@ -1351,10 +1423,11 @@ it.
   automation — no new credentials needed) with HubSpot's native
   inbox-connection feature handling conversation logging, not custom code.
 - `agent/warm_connections.py` is now wired into all four report pipelines
-  (see "Warm-path connection matching" above) — the remaining open piece
-  is HubSpot owner-assignment (auto-setting a lead's Company owner in
-  HubSpot to whichever teammate has the warm path), proposed by the user
-  but not yet built.
+  (see "Warm-path connection matching" above), including HubSpot
+  Company-owner auto-assignment from a warm path (see the "HubSpot
+  Company-owner auto-assignment" callout at the end of that section) —
+  requires the `crm.objects.owners.read` scope on the Private App token,
+  not yet confirmed against the user's account.
 - `run_windows.bat.example` (copy to `run_windows.bat`, fill in real keys,
   gitignored) is a secondary CLI-launcher path, superseded by `gui.py` as
   the primary interface — added after `set` env vars in PowerShell
