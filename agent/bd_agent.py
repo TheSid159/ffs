@@ -53,6 +53,7 @@ from typing import Optional
 
 import anthropic
 
+import biosketch_matching
 import clinicaltrials_gov
 import conferences
 import email_drafts
@@ -140,6 +141,40 @@ def default_signal_sweep_basename(indication: str) -> str:
     return f"{indication_part}_signal_sweep_report"
 
 
+# Shared across all three Claude-driven research prompts (see build_prompt(),
+# build_phase_transition_prompt(), build_signal_sweep_prompt()) — asks
+# Claude to actively dig for a named individual's public background, not
+# just note it if it happens to appear in the source that produced the
+# lead. This rides along in the same paid call/budget as the rest of the
+# search rather than a separate pass, but IS explicitly allowed to spend a
+# slice of that budget searching specifically for a person once named —
+# a deliberately looser instruction than the CEO/CMO contact_name/
+# contact_title fields above it (which stay "bonus only, don't spend
+# budget"), per the user's own call: cast a wide net here, since nothing
+# gets used unconfirmed — biosketch_matching.py only ever surfaces this as
+# a labeled "possible common ground (unverified)" line for a human to
+# independently confirm before acting on, never a claimed fact on its own.
+RELATED_PEOPLE_PROMPT_BLOCK = """\
+Also, for every lead, try to identify a specific NAMED individual connected \
+to it — a trial's principal investigator, a company officer, a conference \
+presenter, whoever a source names — and if you find one, actively search \
+further for their public biographical background (their own bio page, \
+LinkedIn, a hospital/university faculty page, a press release, a conference \
+program) beyond just the source where you first found their name. If you \
+find an institutional affiliation, hometown, or similar background detail, \
+include a "related_people" list on that lead, one object per person: \
+{"name": "...", "role": "...", "affiliation": "..." or null, "location": \
+"..." or null, "confidence": "stated" | "inferred"}. Use "stated" only when \
+a source directly and explicitly says the detail; use "inferred" for \
+anything you pieced together with real but imperfect confidence (e.g. a \
+same-named profile that's very likely, but not certainly, the same \
+person) — don't omit a plausible lead just because you're not fully sure, \
+mark it "inferred" instead; this will be independently verified before \
+anyone acts on it. The one hard line, same as everywhere else in this \
+prompt: never invent a person who doesn't exist, or state a specific fact \
+you didn't actually find somewhere."""
+
+
 def build_prompt(args: argparse.Namespace) -> str:
     conference_list = " and ".join(args.conference)
     years = ", ".join(str(y) for y in args.year)
@@ -208,6 +243,8 @@ as a quoted spokesperson). Do not spend extra search effort specifically \
 hunting for this — a dedicated, verified contact lookup happens separately \
 after your research, so this field is a bonus, not a requirement.
 
+{RELATED_PEOPLE_PROMPT_BLOCK}
+
 One more thing worth actively noting, folded into the existing \
 result_summary/signal_detail text rather than as a separate field — a \
 strong, specific signal of imaging-CRO fit, stronger than the category \
@@ -253,7 +290,10 @@ this exact shape and nothing else inside the fence:
       "abstract_url_note": "..." or null,
       "signal_detail": "..." or null,
       "contact_name": "..." or null,
-      "contact_title": "..." or null
+      "contact_title": "..." or null,
+      "related_people": [
+        {{"name": "...", "role": "...", "affiliation": "..." or null, "location": "..." or null, "confidence": "stated" | "inferred"}}
+      ] or null
     }}
   ],
   "excluded": [
@@ -379,6 +419,8 @@ Congratulations on this milestone."). This must be grounded only in facts \
 you actually found in a real source — never invent a quote, a date, a \
 number, or a detail that isn't present in something you found via search.
 
+{RELATED_PEOPLE_PROMPT_BLOCK}
+
 Anti-fabrication rules (same discipline as always): never invent a contact \
 name, email address, date, or fact. If you can't verify something, leave \
 the field null or say so in "signal_detail" rather than guessing. Only \
@@ -406,7 +448,10 @@ exactly one fenced ```json code block with this exact shape:
       "email_opening": "..." (the 2-4 sentence drafted opening described above),
       "source_urls": ["...", "..."] (every corroborating source URL, at least one),
       "contact_name": null,
-      "contact_title": null
+      "contact_title": null,
+      "related_people": [
+        {{"name": "...", "role": "...", "affiliation": "..." or null, "location": "..." or null, "confidence": "stated" | "inferred"}}
+      ] or null
     }}
   ],
   "excluded": [
@@ -556,6 +601,8 @@ the lead itself). Do not spend extra search effort specifically hunting for \
 this — a dedicated, verified contact lookup happens separately after your \
 research, so this field is a bonus, not a requirement.
 
+{RELATED_PEOPLE_PROMPT_BLOCK}
+
 Also list any items you reviewed but excluded, and why (e.g. no commercial \
 sponsor, wrong indication, or too old/stale to be a timely lead).
 
@@ -582,7 +629,10 @@ categories you covered, and any caveats), followed by exactly one fenced \
       "registry_name": "..." or null,
       "registry_id": "..." or null,
       "contact_name": "..." or null,
-      "contact_title": "..." or null
+      "contact_title": "..." or null,
+      "related_people": [
+        {{"name": "...", "role": "...", "affiliation": "..." or null, "location": "..." or null, "confidence": "stated" | "inferred"}}
+      ] or null
     }}
   ],
   "excluded": [
@@ -1024,6 +1074,7 @@ def render_report(
     repeat_leads: Optional[list] = None,
     known_leads: Optional[list] = None,
     warm_paths: Optional[dict] = None,
+    common_ground: Optional[dict] = None,
 ) -> str:
     # render_report() is shared by all four searches (conference, trial-signals,
     # phase-transitions, signal-sweep — see CLAUDE.md), which are separate,
@@ -1081,6 +1132,7 @@ def render_report(
     lines.append("---")
 
     warm_paths = warm_paths or {}
+    common_ground = common_ground or {}
     for i, (lead, contact) in enumerate(enriched_leads):
         signal_type = (lead.get("signal_type") or "trial_result").strip().lower()
         label = SIGNAL_LABELS.get(signal_type, "Lead")
@@ -1156,6 +1208,18 @@ def render_report(
                 lines.append(f"- {owner_label} connection: {c.full_name}{title_part}{since_part}")
             lines.append("")
 
+        ground_matches = common_ground.get(i)
+        if ground_matches:
+            lines.append("**Possible common ground (unverified — confirm before using):**")
+            for g in ground_matches:
+                owner_label = f"{g.owner}'s" if g.owner else "Your"
+                who = f" ({g.person_name}{', ' + g.person_role if g.person_role else ''})" if g.person_name else ""
+                if g.kind == "affiliation":
+                    lines.append(f"- {owner_label} background includes {g.detail} — shared with{who} on this lead")
+                else:
+                    lines.append(f"- {owner_label} background is based in {g.detail} — shared with{who} on this lead")
+            lines.append("")
+
         subject, body = draft_email(lead, contact, args)
         lines.append("**Draft email:**")
         if signal_type == "phase_transition_deep_signal":
@@ -1229,6 +1293,7 @@ def _build_hubspot_note_body(
     warm_path_matches: Optional[list],
     args: argparse.Namespace,
     other_candidates: Optional[list] = None,
+    common_ground_matches: Optional[list] = None,
 ) -> str:
     """Compose the "why this landed in HubSpot" note (simple HTML, which
     HubSpot's Notes UI renders — bold, links, line breaks) attached to the
@@ -1297,6 +1362,14 @@ def _build_hubspot_note_body(
             owner_label = f"{wp.owner}'s" if wp.owner else "Your"
             title_part = f", {c.position}" if c.position else ""
             parts.append(f"- {html.escape(owner_label)} connection: {html.escape(c.full_name)}{html.escape(title_part)}<br>")
+
+    if common_ground_matches:
+        parts.append("<strong>Possible common ground (unverified — confirm before using):</strong><br>")
+        for g in common_ground_matches:
+            owner_label = f"{g.owner}'s" if g.owner else "Your"
+            who = f" ({g.person_name})" if g.person_name else ""
+            kind_label = "background includes" if g.kind == "affiliation" else "based in"
+            parts.append(f"- {html.escape(owner_label)} {kind_label} {html.escape(g.detail)}{html.escape(who)}<br>")
 
     subject, body = draft_email(lead, contact, args)
     parts.append(f"<br><strong>Draft email — Subject:</strong> {html.escape(subject)}<br>")
@@ -1708,6 +1781,19 @@ def _finalize_and_write(
             file=sys.stderr,
         )
 
+    # Same opt-in "drop files in a folder" pattern as warm_connections above,
+    # in a "biosketches" subfolder of the same directory — a lower-confidence,
+    # separately-labeled tier (see biosketch_matching.py), not blended into
+    # warm_paths.
+    biosketches = biosketch_matching.load_biosketches_dir(Path(args.linkedin_connections_dir) / "biosketches")
+    common_ground = biosketch_matching.find_common_ground_for_leads(biosketches, new_leads) if biosketches else {}
+    if common_ground:
+        print(
+            f"[{len(common_ground)} of {len(new_leads)} lead(s) have possible common ground "
+            f"(shared affiliation/location, unverified) — see the report]",
+            file=sys.stderr,
+        )
+
     print(f"\n\nLooking up {len(new_leads)} contact(s) via Hunter.io..." if args.hunter_api_key else "", file=sys.stderr)
     enriched = enrich_contacts(new_leads, args.hunter_api_key, args.hunter_min_confidence, args.hunter_delay_ms / 1000)
 
@@ -1751,7 +1837,7 @@ def _finalize_and_write(
                     lead["company_domain"], args.hunter_api_key, args.hunter_min_confidence
                 )
             note_bodies_by_index[i] = _build_hubspot_note_body(
-                lead, contact, warm_paths.get(i), args, other_candidates
+                lead, contact, warm_paths.get(i), args, other_candidates, common_ground.get(i)
             )
 
         hubspot_successes, hubspot_failures, hubspot_contact_warnings, hubspot_note_warnings = hubspot_sync.push_leads_to_hubspot(
@@ -1795,6 +1881,7 @@ def _finalize_and_write(
         repeat_leads=repeat_leads,
         known_leads=known_leads,
         warm_paths=warm_paths,
+        common_ground=common_ground,
     )
     out_path.write_text(report, encoding="utf-8")
     print(f"Saved report to {out_path.resolve()}", file=sys.stderr)

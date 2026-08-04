@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import bd_agent
+import biosketch_matching
 import conference_dates
 import email_drafts
 import hubspot_sync
@@ -328,6 +329,18 @@ def _finalize_and_write(
     if warm_paths:
         print(f"[{len(warm_paths)} of {len(new_leads)} lead(s) have a warm-path connection — see the report for who]")
 
+    # Same opt-in "drop files in a folder" pattern as warm_connections above,
+    # in a "biosketches" subfolder of the same directory — a lower-confidence,
+    # separately-labeled tier (see biosketch_matching.py), not blended into
+    # warm_paths.
+    biosketches = biosketch_matching.load_biosketches_dir(Path(args.linkedin_connections_dir) / "biosketches")
+    common_ground = biosketch_matching.find_common_ground_for_leads(biosketches, new_leads) if biosketches else {}
+    if common_ground:
+        print(
+            f"[{len(common_ground)} of {len(new_leads)} lead(s) have possible common ground "
+            f"(shared affiliation/location, unverified) — see the report]"
+        )
+
     if args.hunter_api_key:
         print(f"\n\nLooking up {len(new_leads)} contact(s) via Hunter.io...")
     enriched = bd_agent.enrich_contacts(
@@ -363,7 +376,7 @@ def _finalize_and_write(
                     lead["company_domain"], args.hunter_api_key, args.hunter_min_confidence
                 )
             note_bodies_by_index[i] = bd_agent._build_hubspot_note_body(
-                lead, contact, warm_paths.get(i), args, other_candidates
+                lead, contact, warm_paths.get(i), args, other_candidates, common_ground.get(i)
             )
 
         hubspot_successes, hubspot_failures, hubspot_contact_warnings, hubspot_note_warnings = hubspot_sync.push_leads_to_hubspot(
@@ -400,6 +413,7 @@ def _finalize_and_write(
         repeat_leads=repeat_leads,
         known_leads=known_leads,
         warm_paths=warm_paths,
+        common_ground=common_ground,
     )
     out_path.write_text(report, encoding="utf-8")
 

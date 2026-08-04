@@ -128,7 +128,7 @@ trial-signals sources: `unittest.mock.patch` on `clinicaltrials_gov._get`,
 
 ## Architecture
 
-Fifteen modules, no application framework:
+Sixteen modules, no application framework:
 
 - **`agent/bd_agent.py`** — all four pipelines, plus everything shared
   between them (Hunter enrichment, email drafting, report/CSV rendering):
@@ -1187,6 +1187,131 @@ reviews, social posts about a competitor) from the same planning
 conversation; this already exists as the `vendor_switch_signal` signal
 type in the signal-sweep search (see "Signal sweep search" above) —
 confirmed with the user, no new module needed for this.
+
+### Common-ground matching (built, all four searches, opt-in via a `biosketches` folder)
+
+`agent/biosketch_matching.py` is a second, deliberately lower-confidence
+sibling to `warm_connections.py` — same job (give cold outreach a real
+reason to open with something other than "Dear Sir/Madam"), different
+data: instead of a verified 1st-degree LinkedIn connection, this looks for
+a shared *background* between you (or a teammate) and a specific named
+person tied to a lead — a trial's Principal Investigator, a company
+officer, a conference presenter — same institution, same city. Built after
+the user asked to extend warm-path matching beyond LinkedIn using "filings,
+meetings, public available info," specifically naming university/city/
+county overlap, and dropped in their own LinkedIn `Profile.csv` export to
+seed it.
+
+**Deliberately a separate, lower-confidence tier, never blended into
+`warm_paths`.** A shared university or city is not a personal connection —
+it's a possible conversation opener at best, and could be a coincidence.
+`render_report()` renders it under its own **"Possible common ground
+(unverified — confirm before using)"** heading, distinct from "Warm path",
+and the HubSpot note (`_build_hubspot_note_body()`) does the same. This is
+the same principle CLAUDE.md already established for roster-based name
+matching in the warm-connections section above ("a clearly separate,
+lower-confidence 'possible match — unverified' tier, never blended into
+the same list as a direct match") — just applied to a second, related
+feature.
+
+**Data source, side A (you/your team): a LinkedIn `Profile.csv` export**
+(Settings & Privacy -> Data privacy -> Get a copy of your data -> Profile
+— a different export file than Connections.csv, which `warm_connections.py`
+already uses). `load_biosketches_dir()` mirrors
+`warm_connections.load_connections_dir()` exactly: every `*.csv` in a
+`biosketches` subfolder of `--linkedin-connections-dir` (so a team folder
+that already has `Sarah.csv`/`Darren.csv` connections exports just gets a
+`biosketches/Sarah.csv`/`biosketches/Darren.csv` sibling, no new CLI flag
+or GUI field — same "drop files in a folder" pattern, wired the same way
+into both `bd_agent.py`'s and `gui_logic.py`'s `_finalize_and_write()`).
+`_extract_affiliations()` pulls institution-like phrases out of the
+Headline/Summary free text (e.g. "Associate Professor at University of
+Massachusetts Medical School" -> "University of Massachusetts Medical
+School") — a best-effort heuristic gated on a fixed list of institution-
+type words (university, hospital, institute, etc.) split out on common
+LinkedIn headline separators ("at", "with", commas, dashes), same
+narrow-by-design posture as `pr_wire_feeds.py`'s `_guess_company_name()`.
+City/region come from the Geo Location field via `_parse_geo()` (e.g.
+"Worcester, Massachusetts, United States" -> city="Worcester",
+region="Massachusetts").
+
+**Data source, side B (the lead's people): a new `related_people` field
+on lead dicts**, populated two ways at no extra Claude *call* (though see
+the cost note below):
+- **Free, for ClinicalTrials.gov leads** — a trial's Overall Official
+  (typically its Principal Investigator) is structured API data
+  (`contactsLocationsModule.overallOfficials`: `name`/`affiliation`/
+  `role`), pulled by `clinicaltrials_gov._overall_officials_to_related_people()`
+  from the same study payload the free trial-signals search already
+  fetches — genuinely free, no extra request. Always `"confidence":
+  "stated"` since it's registry data, not something pieced together; no
+  `location` (the API ties an official to an institution, not a personal
+  city). Field names confirmed from documented ClinicalTrials.gov API v2
+  schema, but — like the rest of `clinicaltrials_gov.py` — not yet
+  verified against a live response from this sandbox (network policy
+  blocks `clinicaltrials.gov` outright); if a real run shows this coming
+  back empty for trials that do list an Overall Official on the website,
+  check this field path first.
+- **For the three Claude-driven searches** — `RELATED_PEOPLE_PROMPT_BLOCK`
+  (a single shared instruction, injected into `build_prompt()`,
+  `build_phase_transition_prompt()`, and `build_signal_sweep_prompt()` so
+  the wording can't drift between them) asks Claude to identify a named
+  individual connected to a lead and actively search further for their
+  public background — not just note it if it happens to already be in the
+  source that produced the lead. This rides along in the same paid call,
+  but unlike the CEO/CMO `contact_name`/`contact_title` fields right above
+  it in each prompt ("bonus only, don't spend search budget hunting for
+  this"), this instruction explicitly *does* authorize spending a slice of
+  the existing search budget once a person is named — a deliberately
+  different, looser instruction than everywhere else in these prompts,
+  per the user's own explicit call ("allow claude to be creative when
+  looking for links — we can firm them up with some DD on our end"). To
+  make that workable without loosening this tool's anti-fabrication
+  discipline, `related_people` carries its own `"confidence": "stated" |
+  "inferred"` per person — "stated" only when a source directly says the
+  detail, "inferred" for a real but imperfect match (e.g. a same-named
+  profile that's very likely, not certainly, the right person). Claude is
+  told not to omit a plausible lead just for being uncertain — mark it
+  "inferred" instead, since nothing here gets used unconfirmed anyway
+  (`biosketch_matching.py` only ever surfaces a labeled, unverified
+  "possible common ground" line). The one line that doesn't move: never
+  invent a person who doesn't exist, or state a fact not actually found
+  somewhere — same as every other field in these prompts. Because this can
+  cost a few extra searches within the existing per-call budget
+  (`max_uses=40`/`60`/`70` — see "Per-run cost estimate" above), those
+  budgets were deliberately left unchanged rather than bumped
+  preemptively; if real runs show the core research getting under-
+  searched because of it, that's the first knob to revisit.
+
+**Matching itself is exact/substring only, same discipline as
+`warm_connections.py`'s company-name matching — no fuzzy/semantic
+matching, no numeric closeness score.** `find_common_ground()` does
+case-insensitive substring matching between two already-public
+institution-name strings (one from a biosketch, one from a lead's
+`related_people`) for affiliation matches, and an exact city+region string
+match for location matches. Every match is a separate, plain fact
+(`CommonGround(owner, kind, detail, person_name, person_role)`) — no
+ranking, no "best" match picked, same "leave judgment to the human"
+restraint as `warm_connections.py`'s `WarmPath` and Hunter's own
+confidence scores.
+
+Tested with `unittest.mock.patch` and the user's real uploaded LinkedIn
+`Profile.csv` export (not committed to the repo): affiliation/geo parsing
+against the real headline ("Associate Professor at University of
+Massachusetts Medical School" correctly split into institution
+"University of Massachusetts Medical School" and location "Worcester,
+Massachusetts"), `load_biosketches_dir()`'s per-file-failure posture
+(skips a non-Profile.csv file, keeps loading the rest), affiliation and
+location matching (including a deliberately non-matching third person to
+confirm no false positive), `render_report()`'s and
+`_build_hubspot_note_body()`'s common-ground sections, and a full mocked
+`_run_trial_signals_cli()` run proving a ClinicalTrials.gov Overall
+Official correctly flows all the way through to the rendered report. Not
+yet confirmed against a live ClinicalTrials.gov response, and the
+Claude-prompt side (`related_people` from the three paid searches) hasn't
+been exercised against a real paid run yet either — same "built and
+mock-tested here, confirm on a real run" posture as every other new
+source added this session.
 
 ### HubSpot sync (built, all four searches, opt-in via `--hubspot-api-key`)
 

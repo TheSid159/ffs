@@ -174,6 +174,33 @@ mapping each person's CSV filename to their real HubSpot login email:
 Without this file, warm paths still show in the report as normal — they
 just won't auto-assign a HubSpot owner.
 
+### Optional: possible common ground (shared university, hospital, or city)
+
+A second, separate check, for when there's no direct LinkedIn connection
+but you (or a teammate) might still share some background with someone
+tied to the lead — a trial's principal investigator, a company officer, a
+conference presenter. This is always shown as **unverified** — a shared
+university or city is a possible conversation opener, not a confirmed
+connection, so double-check it before using it.
+
+1. Export your LinkedIn profile: Settings & Privacy -> Data privacy ->
+   "Get a copy of your data" -> Profile (a different export than
+   Connections, above). LinkedIn emails you a `Profile.csv`.
+2. Put that file in a folder called `biosketches` *inside* your
+   `linkedin_connections` folder, named after you — e.g.
+   `linkedin_connections/biosketches/Darren.csv`. Teammates can add their
+   own the same way.
+
+No field to fill in for this one either. A lead with a match gets a
+**"Possible common ground (unverified — confirm before using)"** line
+(e.g. "Darren's background includes University of Massachusetts Medical
+School — shared with Jane Doe, MD, Principal Investigator on this lead").
+This only ever compares your profile's headline/summary/location text
+against publicly stated background info the searches already found for a
+named person on that lead — it never guesses, and it's a much softer
+signal than a Warm path match, so always confirm it yourself before
+referencing it in outreach.
+
 ## Setup
 
 1. Get an Anthropic API key from https://console.anthropic.com (Settings →

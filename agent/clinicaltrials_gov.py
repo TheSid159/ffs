@@ -31,6 +31,7 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import Optional
 
 import sponsor_phase_history
 import trial_site_history
@@ -59,6 +60,46 @@ def _get(params: dict) -> dict:
     )
     with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+def _overall_officials_to_related_people(protocol: dict) -> Optional[list]:
+    """Pull a trial's Overall Official(s) (typically its Principal
+    Investigator) out of the structured API response for
+    biosketch_matching.py's common-ground matching — free, since it's
+    already part of the same study payload this module fetches, no extra
+    request. `contactsLocationsModule.overallOfficials` gives `name`/
+    `affiliation`/`role` directly from the registry, so `confidence` is
+    always "stated", not "inferred" — this is registry data, not something
+    pieced together. No `location` is available here (the API doesn't tie
+    an official to a personal location, only an institutional
+    affiliation) — biosketch_matching.py's affiliation-only matching still
+    works fine without it.
+
+    Field names (`overallOfficials`, `name`, `affiliation`, `role`) are
+    documented ClinicalTrials.gov API v2 schema, not guessed — but, like
+    the rest of this module, not yet confirmed against a live response
+    from this sandbox (network policy blocks clinicaltrials.gov outright;
+    see CLAUDE.md). If a real run ever shows this coming back empty for
+    trials that do list an Overall Official on the website, check this
+    field path first.
+    """
+    contacts_locations = protocol.get("contactsLocationsModule") or {}
+    officials = contacts_locations.get("overallOfficials") or []
+    related_people = []
+    for official in officials:
+        name = official.get("name")
+        if not name:
+            continue
+        related_people.append(
+            {
+                "name": name,
+                "role": official.get("role") or "Overall Official",
+                "affiliation": official.get("affiliation"),
+                "location": None,
+                "confidence": "stated",
+            }
+        )
+    return related_people or None
 
 
 def _study_to_lead(study: dict, signal_type: str, signal_detail: str) -> dict:
@@ -94,6 +135,7 @@ def _study_to_lead(study: dict, signal_type: str, signal_detail: str) -> dict:
         "registry_id": nct_id,
         "contact_name": None,
         "contact_title": None,
+        "related_people": _overall_officials_to_related_people(protocol),
     }
 
 
