@@ -1109,6 +1109,25 @@ writing the report, exclude leads whose company is already marked
 `No Response` company should still be able to resurface for a later
 follow-up — see `is_company_declined()`/`split_declined()`).
 
+**Only ever fires for leads that carry a `company_domain`** — which the
+free trial-signals search's three sources never populate
+(`clinicaltrials_gov.py`/`sec_edgar.py`/`pr_wire_feeds.py` all hardcode
+`"company_domain": None`, since none of those three structured sources
+exposes a company website, only a name). Only the three Claude-driven
+searches (conferences, phase-transitions, signal-sweep) populate it,
+since Claude is explicitly asked to find each company's domain. Confirmed
+directly against a real trial-signals run: two real SEC EDGAR leads came
+back with `company_domain: None`, so HubSpot sync silently did nothing
+for either — expected given the gating, but worth knowing before assuming
+a run "didn't work." (Hunter contact lookup has the exact same gate —
+`hunter_contacts.find_contact()` also requires a domain — so trial-signals
+leads never get a confirmed contact either, regardless of whether a
+Hunter key is set.) `agent/test_hubspot_connection.py` is a small,
+standalone script (prompts for the token interactively, not part of any
+pipeline) for verifying the token/property/API path work against a real
+account without needing a domain-bearing lead or spending any Anthropic
+budget.
+
 Entirely optional, same posture as `email_drafts.py`'s outbox integration:
 only runs if `--hubspot-api-key` is set (env: `HUBSPOT_API_KEY`); nothing
 changes if it's never provided. Wired into `_finalize_and_write()` in both
