@@ -795,6 +795,34 @@ there is no `raw_response` to fall back to if something goes wrong — see
   into `gui.py` (only testable by the user, on their own machine, since
   this sandbox has no Tkinter/display).
 
+  **Layout: a capped-height scrollable top area, with the Progress log
+  always guaranteed its own space below it.** Every field/section added
+  to `gui.py` over this tool's growth (four searches, API keys, Outbox,
+  HubSpot) was originally just `pack()`-ed straight onto the root window
+  top to bottom, which meant the Progress log — the one thing that needs
+  to stay visible *while a search is running* — kept getting squeezed
+  smaller, then off the bottom of the fixed-size window entirely, as more
+  sections were added; a real problem the user hit directly ("dashboard
+  is so full now I can't see if there's any progress"). The fix: a
+  `tk.Canvas` + `ttk.Scrollbar` wraps everything except the log (mouse-
+  wheel-scrollable, capped at a fixed height), packed with `side="top"`;
+  the log frame is packed separately with `side="bottom", fill="both",
+  expand=True` — so the log always claims all remaining vertical space
+  no matter how much content is above it, and the *scrollable* area
+  absorbs any overflow instead. **Outbox and HubSpot fields were also
+  moved out of the main dashboard entirely**, into a separate `Toplevel`
+  "Outbox / HubSpot Settings..." window opened on demand (`open_settings_dialog()`)
+  — both are occasional-setup, opt-in fields most runs never touch, so
+  they no longer cost permanent space on the screen the user looks at
+  every run. `self.outbox_*_var`/`self.hubspot_*_var` `StringVar`s are
+  still created in `__init__()` (not lazily inside the dialog) since
+  `_current_form()` needs to read them on every search regardless of
+  whether the settings window has ever been opened this session. Not yet
+  verified against a real Windows display — this sandbox has no
+  Tkinter/display at all (not even importable), so only `py_compile`
+  could check this change; the user should confirm the scrolling/dialog
+  actually behave as intended on their own machine.
+
   `build_conference_args()`'s `conference` field splits on **commas**, not
   whitespace. It used to split on whitespace, which silently broke a
   single-entry conference name containing its own space — typing "ASCO GU"

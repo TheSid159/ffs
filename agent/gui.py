@@ -74,7 +74,8 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Elevate Imaging — BD Lead Finder")
-        self.geometry("780x860")
+        self.geometry("820x820")
+        self.minsize(700, 500)
         self.log_queue: "queue.Queue" = queue.Queue()
         self.config_data = load_config()
         self.conference_report_path = None
@@ -82,13 +83,57 @@ class App(tk.Tk):
         self.phase_transition_report_path = None
         self.signal_sweep_report_path = None
         self.field_vars = {}
+        self.settings_window = None
+        # Outbox/HubSpot vars are created up front (not lazily inside the
+        # Settings dialog) because _current_form() needs to read them
+        # every run regardless of whether that dialog has ever been opened
+        # this session.
+        self.outbox_email_var = tk.StringVar(value=self.config_data.get("outbox_email", ""))
+        self.outbox_app_password_var = tk.StringVar(value=self.config_data.get("outbox_app_password", ""))
+        self.outbox_imap_host_var = tk.StringVar(value=self.config_data.get("outbox_imap_host", ""))
+        self.outbox_drafts_folder_var = tk.StringVar(value=self.config_data.get("outbox_drafts_folder", "Drafts"))
+        self.hubspot_api_key_var = tk.StringVar(value=self.config_data.get("hubspot_api_key", ""))
+        self.hubspot_outreach_property_var = tk.StringVar(
+            value=self.config_data.get("hubspot_outreach_property", hubspot_sync.DEFAULT_OUTREACH_PROPERTY)
+        )
         self._build_ui()
         self.after(100, self._poll_log_queue)
 
     def _build_ui(self):
         pad = {"padx": 6, "pady": 4}
 
-        calendar_frame = ttk.LabelFrame(self, text="Conference Calendar")
+        # Everything except the Progress log lives in a scrollable area with
+        # a capped height, so no matter how many fields/sections get added
+        # above it, the Progress log below always keeps its own guaranteed
+        # visible space instead of being squeezed off the bottom of a
+        # fixed-size window (the original layout's problem — see CLAUDE.md).
+        top_wrapper = ttk.Frame(self)
+        top_wrapper.pack(side="top", fill="x")
+
+        top_canvas = tk.Canvas(top_wrapper, height=420, highlightthickness=0)
+        top_scrollbar = ttk.Scrollbar(top_wrapper, orient="vertical", command=top_canvas.yview)
+        top_canvas.configure(yscrollcommand=top_scrollbar.set)
+        top_canvas.pack(side="left", fill="both", expand=True)
+        top_scrollbar.pack(side="right", fill="y")
+
+        scroll_frame = ttk.Frame(top_canvas)
+        canvas_window = top_canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+
+        def _on_scroll_frame_configure(_event):
+            top_canvas.configure(scrollregion=top_canvas.bbox("all"))
+
+        def _on_canvas_configure(event):
+            top_canvas.itemconfig(canvas_window, width=event.width)
+
+        scroll_frame.bind("<Configure>", _on_scroll_frame_configure)
+        top_canvas.bind("<Configure>", _on_canvas_configure)
+
+        def _on_mousewheel(event):
+            top_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        top_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        calendar_frame = ttk.LabelFrame(scroll_frame, text="Conference Calendar")
         calendar_frame.pack(fill="x", **pad)
         self.calendar_var = tk.StringVar(value=self._initial_banner_text())
         ttk.Label(calendar_frame, textvariable=self.calendar_var, wraplength=580, justify="left").pack(
@@ -99,10 +144,12 @@ class App(tk.Tk):
         )
         self.refresh_dates_button.pack(side="right", **pad)
 
-        keys_frame = ttk.LabelFrame(self, text="API Keys (saved locally, entered once)")
+        keys_frame = ttk.LabelFrame(scroll_frame, text="API Keys (saved locally, entered once)")
         keys_frame.pack(fill="x", **pad)
 
-        ttk.Label(keys_frame, text="Anthropic API Key (Conferences + Phase Transitions searches):").grid(row=0, column=0, sticky="w", **pad)
+        ttk.Label(keys_frame, text="Anthropic API Key (Conferences + Phase Transitions + Signal Sweep searches):").grid(
+            row=0, column=0, sticky="w", **pad
+        )
         self.anthropic_key_var = tk.StringVar(value=self.config_data.get("anthropic_api_key", ""))
         ttk.Entry(keys_frame, textvariable=self.anthropic_key_var, show="*", width=60).grid(row=0, column=1, **pad)
 
@@ -110,49 +157,11 @@ class App(tk.Tk):
         self.hunter_key_var = tk.StringVar(value=self.config_data.get("hunter_api_key", ""))
         ttk.Entry(keys_frame, textvariable=self.hunter_key_var, show="*", width=60).grid(row=1, column=1, **pad)
 
-        outbox_frame = ttk.LabelFrame(
-            self, text="Outbox (optional — creates real, unsent draft emails in this mailbox instead of just the report)"
+        ttk.Button(keys_frame, text="Outbox / HubSpot Settings...", command=self.open_settings_dialog).grid(
+            row=2, column=0, columnspan=2, sticky="w", **pad
         )
-        outbox_frame.pack(fill="x", **pad)
 
-        ttk.Label(outbox_frame, text="Outbox email address:").grid(row=0, column=0, sticky="w", **pad)
-        self.outbox_email_var = tk.StringVar(value=self.config_data.get("outbox_email", ""))
-        ttk.Entry(outbox_frame, textvariable=self.outbox_email_var, width=60).grid(row=0, column=1, **pad)
-
-        ttk.Label(outbox_frame, text="Outbox app password:").grid(row=1, column=0, sticky="w", **pad)
-        self.outbox_app_password_var = tk.StringVar(value=self.config_data.get("outbox_app_password", ""))
-        ttk.Entry(outbox_frame, textvariable=self.outbox_app_password_var, show="*", width=60).grid(row=1, column=1, **pad)
-
-        ttk.Label(outbox_frame, text="Outbox IMAP host (e.g. imap.gmail.com):").grid(row=2, column=0, sticky="w", **pad)
-        self.outbox_imap_host_var = tk.StringVar(value=self.config_data.get("outbox_imap_host", ""))
-        ttk.Entry(outbox_frame, textvariable=self.outbox_imap_host_var, width=60).grid(row=2, column=1, **pad)
-
-        ttk.Label(outbox_frame, text='Outbox Drafts folder name (default "Drafts", Gmail needs "[Gmail]/Drafts"):').grid(
-            row=3, column=0, sticky="w", **pad
-        )
-        self.outbox_drafts_folder_var = tk.StringVar(value=self.config_data.get("outbox_drafts_folder", "Drafts"))
-        ttk.Entry(outbox_frame, textvariable=self.outbox_drafts_folder_var, width=60).grid(row=3, column=1, **pad)
-
-        hubspot_frame = ttk.LabelFrame(
-            self,
-            text="HubSpot (optional — syncs each new lead as a Contact + Company, and skips companies "
-            "already marked Declined)",
-        )
-        hubspot_frame.pack(fill="x", **pad)
-
-        ttk.Label(hubspot_frame, text="HubSpot Private App access token:").grid(row=0, column=0, sticky="w", **pad)
-        self.hubspot_api_key_var = tk.StringVar(value=self.config_data.get("hubspot_api_key", ""))
-        ttk.Entry(hubspot_frame, textvariable=self.hubspot_api_key_var, show="*", width=60).grid(row=0, column=1, **pad)
-
-        ttk.Label(hubspot_frame, text='"Outreach Status" property internal name (Contact + Company):').grid(
-            row=1, column=0, sticky="w", **pad
-        )
-        self.hubspot_outreach_property_var = tk.StringVar(
-            value=self.config_data.get("hubspot_outreach_property", hubspot_sync.DEFAULT_OUTREACH_PROPERTY)
-        )
-        ttk.Entry(hubspot_frame, textvariable=self.hubspot_outreach_property_var, width=60).grid(row=1, column=1, **pad)
-
-        params_frame = ttk.LabelFrame(self, text="Search parameters")
+        params_frame = ttk.LabelFrame(scroll_frame, text="Search parameters")
         params_frame.pack(fill="x", **pad)
 
         for row, (key, label, default, width) in enumerate(self.FIELDS):
@@ -161,7 +170,7 @@ class App(tk.Tk):
             ttk.Entry(params_frame, textvariable=var, width=width).grid(row=row, column=1, sticky="w", **pad)
             self.field_vars[key] = var
 
-        conf_frame = ttk.LabelFrame(self, text="Conference search (Claude web research — costs API usage)")
+        conf_frame = ttk.LabelFrame(scroll_frame, text="Conference search (Claude web research — costs API usage)")
         conf_frame.pack(fill="x", **pad)
         self.conf_run_button = ttk.Button(conf_frame, text="Search Conferences", command=self.on_run_conferences)
         self.conf_run_button.pack(side="left", **pad)
@@ -170,7 +179,7 @@ class App(tk.Tk):
         )
         self.conf_open_button.pack(side="left", **pad)
 
-        trial_frame = ttk.LabelFrame(self, text="Trial signals search (ClinicalTrials.gov + SEC EDGAR + press releases — free, no LLM)")
+        trial_frame = ttk.LabelFrame(scroll_frame, text="Trial signals search (ClinicalTrials.gov + SEC EDGAR + press releases — free, no LLM)")
         trial_frame.pack(fill="x", **pad)
         self.trial_run_button = ttk.Button(trial_frame, text="Search Trial Signals", command=self.on_run_trial_signals)
         self.trial_run_button.pack(side="left", **pad)
@@ -180,7 +189,7 @@ class App(tk.Tk):
         self.trial_open_button.pack(side="left", **pad)
 
         phase_frame = ttk.LabelFrame(
-            self, text="Phase transitions search (deep web search — LinkedIn, biotech news, blogs — costs API usage)"
+            scroll_frame, text="Phase transitions search (deep web search — LinkedIn, biotech news, blogs — costs API usage)"
         )
         phase_frame.pack(fill="x", **pad)
         self.phase_run_button = ttk.Button(
@@ -193,7 +202,7 @@ class App(tk.Tk):
         self.phase_open_button.pack(side="left", **pad)
 
         sweep_frame = ttk.LabelFrame(
-            self,
+            scroll_frame,
             text="Signal sweep search (funding, leadership, regulatory, and other non-conference "
             "signals — costs API usage, run this one regularly)",
         )
@@ -205,13 +214,74 @@ class App(tk.Tk):
         )
         self.sweep_open_button.pack(side="left", **pad)
 
-        self.new_search_button = ttk.Button(self, text="New Search", command=self.on_new_search)
+        self.new_search_button = ttk.Button(scroll_frame, text="New Search", command=self.on_new_search)
         self.new_search_button.pack(anchor="w", **pad)
 
+        # Deliberately packed with side="bottom" after the (side="top")
+        # top_wrapper above, and fill="both"/expand=True — this is what
+        # guarantees the log gets all remaining vertical space instead of
+        # being squeezed to nothing by however much content is above it.
         log_frame = ttk.LabelFrame(self, text="Progress")
-        log_frame.pack(fill="both", expand=True, **pad)
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=20, state="disabled", wrap="word")
+        log_frame.pack(side="bottom", fill="both", expand=True, **pad)
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=14, state="disabled", wrap="word")
         self.log_text.pack(fill="both", expand=True)
+
+    def open_settings_dialog(self) -> None:
+        """Outbox and HubSpot are both optional, occasional-setup fields —
+        moved out of the main dashboard into their own window so the
+        common case (just running a search) isn't cluttered with fields
+        most runs never touch. Re-focuses the existing window instead of
+        opening a second one if it's already open."""
+        if self.settings_window is not None and self.settings_window.winfo_exists():
+            self.settings_window.lift()
+            self.settings_window.focus_force()
+            return
+
+        pad = {"padx": 6, "pady": 4}
+        win = tk.Toplevel(self)
+        win.title("Outbox / HubSpot Settings")
+        win.geometry("640x420")
+        self.settings_window = win
+
+        outbox_frame = ttk.LabelFrame(
+            win, text="Outbox (optional — creates real, unsent draft emails in this mailbox instead of just the report)"
+        )
+        outbox_frame.pack(fill="x", **pad)
+
+        ttk.Label(outbox_frame, text="Outbox email address:").grid(row=0, column=0, sticky="w", **pad)
+        ttk.Entry(outbox_frame, textvariable=self.outbox_email_var, width=50).grid(row=0, column=1, **pad)
+
+        ttk.Label(outbox_frame, text="Outbox app password:").grid(row=1, column=0, sticky="w", **pad)
+        ttk.Entry(outbox_frame, textvariable=self.outbox_app_password_var, show="*", width=50).grid(row=1, column=1, **pad)
+
+        ttk.Label(outbox_frame, text="Outbox IMAP host (e.g. imap.gmail.com):").grid(row=2, column=0, sticky="w", **pad)
+        ttk.Entry(outbox_frame, textvariable=self.outbox_imap_host_var, width=50).grid(row=2, column=1, **pad)
+
+        ttk.Label(outbox_frame, text='Outbox Drafts folder name (default "Drafts", Gmail needs "[Gmail]/Drafts"):').grid(
+            row=3, column=0, sticky="w", **pad
+        )
+        ttk.Entry(outbox_frame, textvariable=self.outbox_drafts_folder_var, width=50).grid(row=3, column=1, **pad)
+
+        hubspot_frame = ttk.LabelFrame(
+            win,
+            text="HubSpot (optional — syncs each new lead as a Contact + Company, and skips companies "
+            "already marked Declined)",
+        )
+        hubspot_frame.pack(fill="x", **pad)
+
+        ttk.Label(hubspot_frame, text="HubSpot Private App access token:").grid(row=0, column=0, sticky="w", **pad)
+        ttk.Entry(hubspot_frame, textvariable=self.hubspot_api_key_var, show="*", width=50).grid(row=0, column=1, **pad)
+
+        ttk.Label(hubspot_frame, text='"Outreach Status" property internal name (Contact + Company):').grid(
+            row=1, column=0, sticky="w", **pad
+        )
+        ttk.Entry(hubspot_frame, textvariable=self.hubspot_outreach_property_var, width=50).grid(row=1, column=1, **pad)
+
+        def _save_and_close():
+            self._save_form(self._current_form())
+            win.destroy()
+
+        ttk.Button(win, text="Save & Close", command=_save_and_close).pack(anchor="e", **pad)
 
     def _initial_banner_text(self) -> str:
         text = upcoming_meetings_banner_text()
