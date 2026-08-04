@@ -58,6 +58,7 @@ class Connection:
     position: Optional[str]
     connected_on: Optional[str]
     profile_url: Optional[str]
+    owner: str = ""  # whose connections export this came from — see load_connections_dir()
 
     @property
     def full_name(self) -> str:
