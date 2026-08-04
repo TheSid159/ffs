@@ -96,6 +96,9 @@ class App(tk.Tk):
         self.hubspot_outreach_property_var = tk.StringVar(
             value=self.config_data.get("hubspot_outreach_property", hubspot_sync.DEFAULT_OUTREACH_PROPERTY)
         )
+        self.hubspot_no_call_property_var = tk.StringVar(
+            value=self.config_data.get("hubspot_no_call_property", hubspot_sync.DEFAULT_NO_COLD_CALL_PROPERTY)
+        )
         self._build_ui()
         self.after(100, self._poll_log_queue)
 
@@ -277,6 +280,11 @@ class App(tk.Tk):
         )
         ttk.Entry(hubspot_frame, textvariable=self.hubspot_outreach_property_var, width=50).grid(row=1, column=1, **pad)
 
+        ttk.Label(hubspot_frame, text='"Channel Methods Do Not Call" property internal name (Company only):').grid(
+            row=2, column=0, sticky="w", **pad
+        )
+        ttk.Entry(hubspot_frame, textvariable=self.hubspot_no_call_property_var, width=50).grid(row=2, column=1, **pad)
+
         def _save_and_close():
             self._save_form(self._current_form())
             win.destroy()
@@ -349,6 +357,7 @@ class App(tk.Tk):
         form["outbox_drafts_folder"] = self.outbox_drafts_folder_var.get()
         form["hubspot_api_key"] = self.hubspot_api_key_var.get()
         form["hubspot_outreach_property"] = self.hubspot_outreach_property_var.get()
+        form["hubspot_no_call_property"] = self.hubspot_no_call_property_var.get()
         return form
 
     def _save_form(self, form: dict) -> None:

@@ -1152,6 +1152,25 @@ writing the report, exclude leads whose company is already marked
 `No Response` company should still be able to resurface for a later
 follow-up — see `is_company_declined()`/`split_declined()`).
 
+**Every Company also gets "Channel Methods Do Not Call" set to `Yes`, by
+default and unconditionally** (Company object only — Contact has no
+equivalent field). The user's own reasoning: every lead this tool
+surfaces already has a specific trigger (that's the definition of a lead
+here — a funding round, a trial result, whatever the signal was) and/or a
+possible warm-path introduction, so none of them should get a vanilla
+cold call from the sales team; outreach should go through the drafted
+email or a warm intro instead. `upsert_company()`/`sync_lead()`/
+`push_leads_to_hubspot()` all take a `no_cold_call_property` parameter
+(default `DEFAULT_NO_COLD_CALL_PROPERTY`) — pass an empty string to
+disable it for a given call, or override the property name via
+`--hubspot-no-call-property` (CLI/env `HUBSPOT_NO_CALL_PROPERTY`) or the
+GUI's Settings dialog. Like `outreach_status`, `channel_methods_do_not_call`
+is a **best guess** at HubSpot's auto-generated internal name from the
+display label the user gave us ("Channel Methods Do Not Call") — not yet
+confirmed against a live account the way `outreach_status` was;
+`test_hubspot_connection.py` now prompts for and verifies this property
+too, the same way, so it can be confirmed/corrected the same way.
+
 **Only ever fires for leads that carry a `company_domain`** — which the
 free trial-signals search's three sources never populate
 (`clinicaltrials_gov.py`/`sec_edgar.py`/`pr_wire_feeds.py` all hardcode

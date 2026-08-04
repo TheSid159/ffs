@@ -101,6 +101,8 @@ def _hubspot_fields(form: dict) -> dict:
         hubspot_api_key=form.get("hubspot_api_key", "").strip() or None,
         hubspot_outreach_property=form.get("hubspot_outreach_property", "").strip()
         or hubspot_sync.DEFAULT_OUTREACH_PROPERTY,
+        hubspot_no_call_property=form.get("hubspot_no_call_property", "").strip()
+        or hubspot_sync.DEFAULT_NO_COLD_CALL_PROPERTY,
     )
 
 
@@ -340,7 +342,7 @@ def _finalize_and_write(
     if args.hubspot_api_key:
         print(f"\nSyncing {len(enriched)} lead(s) to HubSpot...")
         hubspot_successes, hubspot_failures, hubspot_contact_warnings = hubspot_sync.push_leads_to_hubspot(
-            enriched, args.hubspot_api_key, args.hubspot_outreach_property
+            enriched, args.hubspot_api_key, args.hubspot_outreach_property, args.hubspot_no_call_property
         )
         print(f"[{hubspot_successes} lead(s) synced to HubSpot as {hubspot_sync.CONTACTED_VALUE}]")
         if hubspot_failures:

@@ -8,6 +8,14 @@ should still be able to resurface for a later follow-up; only an explicit
 `Declined` excludes it. See CLAUDE.md's "HubSpot sync" section for the
 full design and credential-path rationale.
 
+Also sets the Company's "Channel Methods Do Not Call" property to "Yes"
+by default on every Company this tool creates/updates — the user's own
+instruction: every lead here already has a specific trigger this tool
+found (that's what makes it a lead) and/or a possible warm-path
+introduction, so none of them should get a vanilla cold call from the
+sales team; outreach should go through the drafted email (or a warm
+intro) instead. Company-only — Contact has no equivalent field for this.
+
 Entirely optional, same posture as email_drafts.py's outbox integration:
 only runs if `--hubspot-api-key` is set; the tool's core behavior is
 unchanged if it's never provided.
@@ -45,6 +53,16 @@ REQUEST_TIMEOUT_SECONDS = 20
 DEFAULT_OUTREACH_PROPERTY = "outreach_status"
 DECLINED_VALUE = "Declined"
 CONTACTED_VALUE = "Contacted"
+
+# Best-guess internal name/value, following the same HubSpot auto-slugify
+# pattern already confirmed for Outreach Status ("Outreach Status" ->
+# "outreach_status") — the user gave us the display label ("Channel
+# Methods Do Not Call") but not a confirmed internal name or the "Yes"
+# option's actual backend value. Override via --hubspot-no-call-property
+# if HubSpot generated something different; verify with
+# test_hubspot_connection.py the same way Outreach Status was confirmed.
+DEFAULT_NO_COLD_CALL_PROPERTY = "channel_methods_do_not_call"
+NO_COLD_CALL_YES_VALUE = "Yes"
 
 
 class HubSpotAPIError(Exception):
@@ -149,11 +167,17 @@ def upsert_company(
     api_key: str,
     outreach_property: str = DEFAULT_OUTREACH_PROPERTY,
     status: str = CONTACTED_VALUE,
+    no_cold_call_property: Optional[str] = DEFAULT_NO_COLD_CALL_PROPERTY,
 ) -> str:
-    """Create or update a Company by domain, setting its Outreach Status.
-    Returns the HubSpot object ID."""
+    """Create or update a Company by domain, setting its Outreach Status
+    and (unless `no_cold_call_property` is falsy) its Channel Methods Do
+    Not Call property to "Yes" — every lead reaching this point already
+    has a specific trigger and/or warm path, so none should get a vanilla
+    cold call; see the module docstring. Returns the HubSpot object ID."""
     existing = find_company_by_domain(domain, api_key, outreach_property)
     properties = {"name": name, "domain": domain, outreach_property: status}
+    if no_cold_call_property:
+        properties[no_cold_call_property] = NO_COLD_CALL_YES_VALUE
     if existing:
         _request("PATCH", f"/crm/v3/objects/companies/{existing['id']}", api_key, {"properties": properties})
         return existing["id"]
@@ -195,7 +219,12 @@ def associate_contact_with_company(contact_id: str, company_id: str, api_key: st
 
 
 def sync_lead(
-    lead: dict, contact, api_key: str, outreach_property: str = DEFAULT_OUTREACH_PROPERTY, status: str = CONTACTED_VALUE
+    lead: dict,
+    contact,
+    api_key: str,
+    outreach_property: str = DEFAULT_OUTREACH_PROPERTY,
+    status: str = CONTACTED_VALUE,
+    no_cold_call_property: Optional[str] = DEFAULT_NO_COLD_CALL_PROPERTY,
 ) -> dict:
     """Push one lead (+ its Hunter-enriched `contact`, if any — a
     hunter_contacts.Contact or None) to HubSpot as a Company, plus a
@@ -224,7 +253,11 @@ def sync_lead(
     if not domain:
         return {}
     company_name = lead.get("company_name") or domain
-    result = {"company_id": upsert_company(domain, company_name, api_key, outreach_property, status)}
+    result = {
+        "company_id": upsert_company(
+            domain, company_name, api_key, outreach_property, status, no_cold_call_property
+        )
+    }
 
     email = getattr(contact, "email", None) if contact else None
     if email:
@@ -239,7 +272,12 @@ def sync_lead(
     return result
 
 
-def push_leads_to_hubspot(enriched_leads: list, api_key: str, outreach_property: str = DEFAULT_OUTREACH_PROPERTY) -> tuple:
+def push_leads_to_hubspot(
+    enriched_leads: list,
+    api_key: str,
+    outreach_property: str = DEFAULT_OUTREACH_PROPERTY,
+    no_cold_call_property: Optional[str] = DEFAULT_NO_COLD_CALL_PROPERTY,
+) -> tuple:
     """Sync every lead in `enriched_leads` (a list of (lead, contact)
     tuples, same shape used throughout this tool) to HubSpot. Returns
     (success_count, [(lead, error_message), ...], [(lead, contact_error), ...])
@@ -253,7 +291,7 @@ def push_leads_to_hubspot(enriched_leads: list, api_key: str, outreach_property:
     contact_warnings = []
     for lead, contact in enriched_leads:
         try:
-            result = sync_lead(lead, contact, api_key, outreach_property)
+            result = sync_lead(lead, contact, api_key, outreach_property, no_cold_call_property=no_cold_call_property)
             if result:
                 successes += 1
                 if result.get("contact_error"):

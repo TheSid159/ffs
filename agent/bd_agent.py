@@ -1408,6 +1408,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "for that label — override if yours came out different). Used on both Contact and Company.",
     )
     common.add_argument(
+        "--hubspot-no-call-property",
+        default=os.environ.get("HUBSPOT_NO_CALL_PROPERTY", hubspot_sync.DEFAULT_NO_COLD_CALL_PROPERTY),
+        help="Internal name of the HubSpot Company property for 'Channel Methods Do Not Call' "
+        f"(default: {hubspot_sync.DEFAULT_NO_COLD_CALL_PROPERTY!r}, a best guess from the display label — "
+        "override if yours came out different). Every Company this tool creates/updates gets this set "
+        "to \"Yes\" — every lead here already has a specific trigger and/or possible warm-path intro, "
+        "so none of them should get a vanilla cold call. Pass an empty string to disable entirely.",
+    )
+    common.add_argument(
         "--linkedin-connections-dir",
         default=os.environ.get("LINKEDIN_CONNECTIONS_DIR", "linkedin_connections"),
         help="Directory of LinkedIn connections export CSVs (default: linkedin_connections, next to "
@@ -1630,7 +1639,7 @@ def _finalize_and_write(
     if args.hubspot_api_key:
         print(f"\nSyncing {len(enriched)} lead(s) to HubSpot...", file=sys.stderr)
         hubspot_successes, hubspot_failures, hubspot_contact_warnings = hubspot_sync.push_leads_to_hubspot(
-            enriched, args.hubspot_api_key, args.hubspot_outreach_property
+            enriched, args.hubspot_api_key, args.hubspot_outreach_property, args.hubspot_no_call_property
         )
         print(f"[{hubspot_successes} lead(s) synced to HubSpot as {hubspot_sync.CONTACTED_VALUE}]", file=sys.stderr)
         if hubspot_failures:
