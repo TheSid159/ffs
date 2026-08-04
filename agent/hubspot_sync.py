@@ -39,6 +39,7 @@ tool.
 
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Optional
 
@@ -126,6 +127,22 @@ def find_contact_by_email(email: str, api_key: str, outreach_property: str = DEF
     )
 
 
+def find_owner_id_by_email(email: str, api_key: str) -> Optional[str]:
+    """Look up a HubSpot user's numeric Owner ID by their login email via
+    the Owners API (GET /crm/v3/owners?email=...) — this is what
+    "Company owner" (the standard `hubspot_owner_id` property) needs as
+    its value, not an email or name string. Returns None if no owner with
+    that email exists in this account, or the Private App's token doesn't
+    have the scope for it (`crm.objects.owners.read` — check this if
+    owner-assignment silently never happens)."""
+    if not email:
+        return None
+    query = urllib.parse.urlencode({"email": email})
+    data = _request("GET", f"/crm/v3/owners?{query}", api_key)
+    results = data.get("results") or []
+    return results[0]["id"] if results else None
+
+
 def is_company_declined(domain: str, api_key: str, outreach_property: str = DEFAULT_OUTREACH_PROPERTY) -> bool:
     """True only if the company exists in HubSpot AND its Outreach Status
     is exactly "Declined". A company HubSpot has never heard of, or one
@@ -168,16 +185,23 @@ def upsert_company(
     outreach_property: str = DEFAULT_OUTREACH_PROPERTY,
     status: str = CONTACTED_VALUE,
     no_cold_call_property: Optional[str] = DEFAULT_NO_COLD_CALL_PROPERTY,
+    owner_id: Optional[str] = None,
 ) -> str:
     """Create or update a Company by domain, setting its Outreach Status
     and (unless `no_cold_call_property` is falsy) its Channel Methods Do
     Not Call property to "Yes" — every lead reaching this point already
     has a specific trigger and/or warm path, so none should get a vanilla
-    cold call; see the module docstring. Returns the HubSpot object ID."""
+    cold call; see the module docstring. If `owner_id` is given (a numeric
+    HubSpot Owner ID — see find_owner_id_by_email()), also sets the
+    standard "Company owner" property (`hubspot_owner_id`) to it — used
+    to auto-assign a lead's Company to whichever Elevate teammate has the
+    warm-path connection, see sync_lead(). Returns the HubSpot object ID."""
     existing = find_company_by_domain(domain, api_key, outreach_property)
     properties = {"name": name, "domain": domain, outreach_property: status}
     if no_cold_call_property:
         properties[no_cold_call_property] = NO_COLD_CALL_YES_VALUE
+    if owner_id:
+        properties["hubspot_owner_id"] = owner_id
     if existing:
         _request("PATCH", f"/crm/v3/objects/companies/{existing['id']}", api_key, {"properties": properties})
         return existing["id"]
@@ -225,6 +249,7 @@ def sync_lead(
     outreach_property: str = DEFAULT_OUTREACH_PROPERTY,
     status: str = CONTACTED_VALUE,
     no_cold_call_property: Optional[str] = DEFAULT_NO_COLD_CALL_PROPERTY,
+    owner_id: Optional[str] = None,
 ) -> dict:
     """Push one lead (+ its Hunter-enriched `contact`, if any — a
     hunter_contacts.Contact or None) to HubSpot as a Company, plus a
@@ -237,6 +262,12 @@ def sync_lead(
     `contact.email` when Hunter actually confirmed it — never a guessed
     name/address — same anti-fabrication discipline as email_drafts.py's
     outbox integration.
+
+    `owner_id` (a numeric HubSpot Owner ID, already resolved by the
+    caller — see push_leads_to_hubspot()) auto-assigns the Company to
+    whichever Elevate teammate has a warm-path connection there. None
+    means no assignment happens — the record is left unowned (or keeps
+    its existing owner, on an update), never guessed.
 
     The Contact upsert is best-effort: if it fails (e.g. the Outreach
     Status property doesn't exist yet on the Contact object, only on
@@ -255,7 +286,7 @@ def sync_lead(
     company_name = lead.get("company_name") or domain
     result = {
         "company_id": upsert_company(
-            domain, company_name, api_key, outreach_property, status, no_cold_call_property
+            domain, company_name, api_key, outreach_property, status, no_cold_call_property, owner_id
         )
     }
 
@@ -277,6 +308,7 @@ def push_leads_to_hubspot(
     api_key: str,
     outreach_property: str = DEFAULT_OUTREACH_PROPERTY,
     no_cold_call_property: Optional[str] = DEFAULT_NO_COLD_CALL_PROPERTY,
+    owner_emails_by_index: Optional[dict] = None,
 ) -> tuple:
     """Sync every lead in `enriched_leads` (a list of (lead, contact)
     tuples, same shape used throughout this tool) to HubSpot. Returns
@@ -285,13 +317,33 @@ def push_leads_to_hubspot(
     same pattern as email_drafts.push_drafts_for_report(). The third list
     is soft warnings only (see sync_lead()'s "contact_error") — those
     leads are still counted as successes, since their Company record
-    synced fine; only the Contact side didn't."""
+    synced fine; only the Contact side didn't.
+
+    `owner_emails_by_index` is `{lead_index: hubspot_login_email}` (see
+    warm_connections.owner_emails_for_warm_paths()) — each unique email is
+    resolved to a numeric Owner ID via find_owner_id_by_email() at most
+    once per call (cached), and a lookup failure or unknown email just
+    means no owner gets assigned for that lead, never an error that stops
+    the sync."""
     successes = 0
     failures = []
     contact_warnings = []
-    for lead, contact in enriched_leads:
+    owner_emails_by_index = owner_emails_by_index or {}
+    owner_id_cache: dict = {}
+    for i, (lead, contact) in enumerate(enriched_leads):
+        owner_id = None
+        owner_email = owner_emails_by_index.get(i)
+        if owner_email:
+            if owner_email not in owner_id_cache:
+                try:
+                    owner_id_cache[owner_email] = find_owner_id_by_email(owner_email, api_key)
+                except HubSpotAPIError:
+                    owner_id_cache[owner_email] = None
+            owner_id = owner_id_cache[owner_email]
         try:
-            result = sync_lead(lead, contact, api_key, outreach_property, no_cold_call_property=no_cold_call_property)
+            result = sync_lead(
+                lead, contact, api_key, outreach_property, no_cold_call_property=no_cold_call_property, owner_id=owner_id
+            )
             if result:
                 successes += 1
                 if result.get("contact_error"):

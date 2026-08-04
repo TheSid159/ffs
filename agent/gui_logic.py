@@ -319,6 +319,14 @@ def _finalize_and_write(
                 f"Declined in HubSpot: {', '.join(d.get('company_name') or 'Unknown' for d in declined_leads)}]"
             )
 
+    # Computed before Hunter enrichment/HubSpot sync (not just before
+    # rendering) so a warm-path match's owner can be used to auto-assign
+    # HubSpot's Company owner — see the args.hubspot_api_key block below.
+    connections = warm_connections.load_connections_dir(Path(args.linkedin_connections_dir))
+    warm_paths = warm_connections.find_warm_paths_for_leads(connections, new_leads) if connections else {}
+    if warm_paths:
+        print(f"[{len(warm_paths)} of {len(new_leads)} lead(s) have a warm-path connection — see the report for who]")
+
     if args.hunter_api_key:
         print(f"\n\nLooking up {len(new_leads)} contact(s) via Hunter.io...")
     enriched = bd_agent.enrich_contacts(
@@ -341,10 +349,20 @@ def _finalize_and_write(
 
     if args.hubspot_api_key:
         print(f"\nSyncing {len(enriched)} lead(s) to HubSpot...")
+        owner_emails_by_index = {}
+        if warm_paths:
+            owner_emails = warm_connections.load_owner_emails(Path(args.linkedin_connections_dir))
+            owner_emails_by_index = warm_connections.owner_emails_for_warm_paths(warm_paths, owner_emails)
         hubspot_successes, hubspot_failures, hubspot_contact_warnings = hubspot_sync.push_leads_to_hubspot(
-            enriched, args.hubspot_api_key, args.hubspot_outreach_property, args.hubspot_no_call_property
+            enriched, args.hubspot_api_key, args.hubspot_outreach_property, args.hubspot_no_call_property,
+            owner_emails_by_index,
         )
         print(f"[{hubspot_successes} lead(s) synced to HubSpot as {hubspot_sync.CONTACTED_VALUE}]")
+        if owner_emails_by_index:
+            print(
+                f"[{len(owner_emails_by_index)} lead(s) had their HubSpot Company owner "
+                f"auto-assigned from a warm-path connection]"
+            )
         if hubspot_failures:
             print(f"\n[Warning: {len(hubspot_failures)} lead(s) FAILED to sync to HubSpot — first error: {hubspot_failures[0][1]}]")
         if hubspot_contact_warnings:
@@ -354,11 +372,6 @@ def _finalize_and_write(
                 f"--hubspot-outreach-property ({args.hubspot_outreach_property!r}) doesn't exist on the "
                 "Contact object — check its internal name in HubSpot.]"
             )
-
-    connections = warm_connections.load_connections_dir(Path(args.linkedin_connections_dir))
-    warm_paths = warm_connections.find_warm_paths_for_leads(connections, new_leads) if connections else {}
-    if warm_paths:
-        print(f"[{len(warm_paths)} of {len(new_leads)} lead(s) have a warm-path connection — see the report for who]")
 
     report = bd_agent.render_report(
         preamble,

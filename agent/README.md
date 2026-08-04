@@ -159,6 +159,21 @@ know who to ask for an introduction. No LinkedIn scraping is involved —
 this only ever reads the CSV files you and your team already downloaded
 directly from LinkedIn's own export tool.
 
+**If you're also using HubSpot sync**, a warm path can automatically set
+that lead's Company owner in HubSpot to whichever teammate has the
+connection. This needs one extra file — `linkedin_connections/owners.json` —
+mapping each person's CSV filename to their real HubSpot login email:
+
+```json
+{
+  "Darren": "darren@elevateimaging.com",
+  "Sarah": "sarah@elevateimaging.com"
+}
+```
+
+Without this file, warm paths still show in the report as normal — they
+just won't auto-assign a HubSpot owner.
+
 ## Setup
 
 1. Get an Anthropic API key from https://console.anthropic.com (Settings →

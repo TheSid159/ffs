@@ -1134,6 +1134,53 @@ the user's real LinkedIn export (612 real connections parsed with no
 errors; spot-checked matches against real companies, including 15 warm
 paths to a competing imaging CRO already in the user's network).
 
+**HubSpot Company-owner auto-assignment from a warm path.** When
+HubSpot sync is also enabled and a lead has a warm-path match,
+`hubspot_sync.upsert_company()` sets HubSpot's standard "Company owner"
+property (`hubspot_owner_id`) to whichever Elevate teammate has the
+connection — the record lands in HubSpot already assigned to the right
+person, not just flagged in the report. Requires an **explicit** mapping
+from a connections-CSV owner label to that person's real HubSpot login
+email — `warm_connections.load_owner_emails()` reads it from
+`owners.json` in the same `linkedin_connections` folder (e.g.
+`{"Sarah": "sarah@elevateimaging.com"}`) — the CSV filename stem
+("Sarah") is just a display label, not necessarily a real login email,
+and guessing one from the other risks assigning a lead to the wrong
+person's HubSpot account; same identity-guessing risk already ruled out
+for roster-based name matching above. Missing `owners.json`, or a label
+not listed in it, just means no owner gets auto-assigned for that
+person's connections — never an error.
+
+If a lead has warm-path matches from more than one teammate, only the
+**first** match's owner is used (`owner_emails_for_warm_paths()`) —
+HubSpot only supports one owner per record, and there's no connection-
+strength score to prefer one teammate's match over another's, so
+first-found (alphabetical by connections-CSV filename) is the least-
+arbitrary deterministic choice available.
+
+`hubspot_sync.find_owner_id_by_email()` resolves each teammate's email to
+HubSpot's numeric Owner ID via the Owners API (`GET /crm/v3/owners?email=...`)
+— `hubspot_owner_id` needs that numeric ID as its value, not an email or
+name string. `push_leads_to_hubspot()` resolves and caches each unique
+email at most once per run, and a lookup failure or unmapped email just
+means no owner assignment for that lead — never blocks the rest of the
+sync. **The Private App's token may need the `crm.objects.owners.read`
+scope added** for this to work — not yet confirmed against the user's
+account; if owner-assignment silently never happens, check that scope
+first.
+
+Note this required reordering `_finalize_and_write()` in both
+`bd_agent.py` and `gui_logic.py`: warm-path matching now happens
+*before* the HubSpot Declined-check/sync block (it used to happen only
+right before `render_report()`), so a lead's owner-email lookup is
+available in time for the HubSpot sync step that needs it.
+
+Tested with `unittest.mock.patch`: owner-email loading/mapping, first-
+match-wins tie-breaking, Owner-ID resolution and caching, and a full
+mocked `_run_trial_signals_cli()` run proving a warm path correctly
+drives `hubspot_owner_id` end to end. Not yet confirmed against a live
+account.
+
 **Related, already covered — don't duplicate:** the user separately asked
 about a "competitor dissatisfaction" module (public complaints, negative
 reviews, social posts about a competitor) from the same planning

@@ -35,6 +35,7 @@ into a company, which is worse than silently missing a real one.
 
 import csv
 import io
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -196,3 +197,54 @@ def find_warm_paths_for_leads(connections: list, leads: list) -> dict:
         if matches:
             results[i] = matches
     return results
+
+
+def load_owner_emails(dir_path: Path) -> dict:
+    """Load `{owner_label: hubspot_login_email}` from `owners.json` in
+    `dir_path` (the same folder as the connections CSVs), if present —
+    e.g. `{"Sarah": "sarah@elevateimaging.com"}`.
+
+    This mapping is deliberately explicit, never guessed: a connections
+    CSV's filename stem ("Sarah") is just a display label, not
+    necessarily that person's real HubSpot login email, and inferring one
+    from the other risks assigning a lead to the wrong person's HubSpot
+    account — the same identity-guessing risk already ruled out for
+    roster-based name matching (see the module docstring). A missing
+    file, or a label not listed in it, just means no HubSpot owner gets
+    auto-assigned for that person's connections — never an error.
+    """
+    path = dir_path / "owners.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def owner_emails_for_warm_paths(warm_paths: dict, owner_emails: dict) -> dict:
+    """Given `find_warm_paths_for_leads()`'s `{lead_index: [WarmPath, ...]}`
+    and `load_owner_emails()`'s `{owner_label: email}`, return
+    `{lead_index: email}` for every lead whose *first* warm-path match's
+    owner has a known email — used to auto-assign HubSpot's Company owner
+    to whichever teammate has the connection (see hubspot_sync.py).
+
+    Only the first match is used deliberately: HubSpot only supports one
+    owner per record, and there's no connection-strength score to prefer
+    one teammate's match over another's (see "No invented connection-
+    strength score" above) — first-found (alphabetical by connections
+    CSV filename, per load_connections_dir()) is the least-arbitrary
+    deterministic choice available. A lead whose matching owner isn't in
+    `owner_emails` is simply absent from the result, not present with a
+    `None` — the caller shouldn't attempt an assignment for it at all.
+    """
+    result = {}
+    for i, matches in warm_paths.items():
+        if not matches:
+            continue
+        owner_label = matches[0].owner
+        email = owner_emails.get(owner_label)
+        if email:
+            result[i] = email
+    return result
