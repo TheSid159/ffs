@@ -1159,23 +1159,32 @@ property labeled "Outreach Status" when there's no naming collision on the
 account. The user's actual Contact and Company properties can end up with
 different internal names (HubSpot generates them independently per
 object), so this default is a starting point, not a confirmed value — the
-same one flag is used for both objects, on the assumption they match;
-if the user's account gave them different internal names, this would need
-to become two separate flags. Not yet corrected against the user's real
-HubSpot account.
+same one flag is used for both objects, on the assumption they match.
+**Confirmed correct for the Company object** via a real run of
+`test_hubspot_connection.py` against the user's live account (`outreach_status`
+took the write with no error, real HubSpot object ID returned). Still
+unconfirmed for the Contact object specifically — Contact property setup
+was never fully completed during the user's HubSpot walkthrough, though
+`sync_lead()`'s best-effort handling (see above) means this can't block
+the Company side regardless.
 
 The API endpoint shapes (CRM v3 objects search/create/update, and the v4
 "default association" shorthand for linking a Contact to a Company) are
 confirmed against HubSpot's own developer-docs conventions, which have
-been stable for years — but this dev sandbox's network policy blocks
+been stable for years. This dev sandbox's own network policy still blocks
 `api.hubapi.com` outright (like every other external API touched this
-session), so none of this has been exercised against a live account yet.
-Built and tested here with `unittest.mock.patch` on `hubspot_sync._request()`
-using fabricated responses, including a full mocked run of
-`_run_trial_signals_cli()` proving the Declined-exclusion and sync steps
-both fire correctly end to end; a real run should be checked once by the
-user before relying on it, same as every other new integration added to
-this tool.
+session), so all of this was built and mock-tested here with
+`unittest.mock.patch` on `hubspot_sync._request()` — but **the user has
+since confirmed a real run works**: `test_hubspot_connection.py` against
+their live account created a real Company (HubSpot ID `57257808228`) with
+`outreach_status` set correctly and `is_company_declined()` returning the
+expected `False` — so the Company-side path (search/create/update,
+auth, the property name) is proven working, not just plausible. The
+full search-pipeline integration (`split_declined()`/`push_leads_to_hubspot()`
+end to end, and the Contact side) hasn't been separately confirmed on a
+live run yet — the one real run so far only exercised leads with no
+`company_domain` (see above), so HubSpot sync never actually fired during
+it.
 
 ### Known gaps (not yet implemented)
 
