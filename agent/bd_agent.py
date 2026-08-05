@@ -944,7 +944,12 @@ def _opening_and_transition(lead: dict, args: argparse.Namespace) -> tuple:
 
     elif signal_type == "new_registration":
         registry = lead.get("registry_name") or "the registry"
-        opening = f"I saw that {company} has registered a new {args.phase} trial for {asset} on {registry}. Congratulations on advancing to this stage."
+        # Not args.phase: this signal type only ever comes from the
+        # signal-sweep search (see CATEGORY 3 in build_signal_sweep_prompt()),
+        # whose Namespace has no .phase attribute — that's a conference-search-
+        # only CLI flag. A trial's own phase isn't a separate lead field here,
+        # so it's left out rather than guessed at.
+        opening = f"I saw that {company} has registered a new trial for {asset} on {registry}. Congratulations on advancing to this stage."
         transition = f"Given this, {intro} as you plan imaging assessment for this trial."
 
     elif signal_type == "regulatory_designation":
@@ -1829,16 +1834,32 @@ def _finalize_and_write(
         # the note, not just the one picked for outreach. Opt-in-stacked
         # cost: only fires when both --hunter-api-key and --hubspot-api-key
         # are set, and only once per lead, not per Hunter usage generally.
+        # A crash composing one lead's note body must never lose the whole
+        # run (this exact failure mode hit a real run — new_registration's
+        # opening template referenced a CLI arg that only exists on the
+        # conference search's Namespace, and since nothing here was caught,
+        # it aborted before render_report() ever got to save the report at
+        # all, not just before the HubSpot sync). That lead just gets no
+        # note attached — its Company/Contact still sync normally, same
+        # best-effort posture push_leads_to_hubspot() already applies to a
+        # Notes-API-level failure.
         note_bodies_by_index = {}
         for i, (lead, contact) in enumerate(enriched):
-            other_candidates = None
-            if args.hunter_api_key and lead.get("company_domain"):
-                other_candidates = hunter_contacts.find_all_candidates(
-                    lead["company_domain"], args.hunter_api_key, args.hunter_min_confidence
+            try:
+                other_candidates = None
+                if args.hunter_api_key and lead.get("company_domain"):
+                    other_candidates = hunter_contacts.find_all_candidates(
+                        lead["company_domain"], args.hunter_api_key, args.hunter_min_confidence
+                    )
+                note_bodies_by_index[i] = _build_hubspot_note_body(
+                    lead, contact, warm_paths.get(i), args, other_candidates, common_ground.get(i)
                 )
-            note_bodies_by_index[i] = _build_hubspot_note_body(
-                lead, contact, warm_paths.get(i), args, other_candidates, common_ground.get(i)
-            )
+            except Exception as exc:
+                print(
+                    f"[Warning: could not compose HubSpot note for {lead.get('company_name') or 'a lead'} "
+                    f"— {exc}. Its Company/Contact will still sync, just without a note.]",
+                    file=sys.stderr,
+                )
 
         hubspot_successes, hubspot_failures, hubspot_contact_warnings, hubspot_note_warnings = hubspot_sync.push_leads_to_hubspot(
             enriched, args.hubspot_api_key, args.hubspot_outreach_property, args.hubspot_no_call_property,

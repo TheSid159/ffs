@@ -368,16 +368,28 @@ def _finalize_and_write(
             owner_emails = warm_connections.load_owner_emails(Path(args.linkedin_connections_dir))
             owner_emails_by_index = warm_connections.owner_emails_for_warm_paths(warm_paths, owner_emails)
 
+        # A crash composing one lead's note body must never lose the whole
+        # run — see bd_agent.py's _finalize_and_write() for the real
+        # failure this guards against (a note-body bug aborted an entire
+        # run before the report ever got saved, not just before HubSpot
+        # sync). That lead just gets no note attached; its Company/Contact
+        # still sync normally.
         note_bodies_by_index = {}
         for i, (lead, contact) in enumerate(enriched):
-            other_candidates = None
-            if args.hunter_api_key and lead.get("company_domain"):
-                other_candidates = hunter_contacts.find_all_candidates(
-                    lead["company_domain"], args.hunter_api_key, args.hunter_min_confidence
+            try:
+                other_candidates = None
+                if args.hunter_api_key and lead.get("company_domain"):
+                    other_candidates = hunter_contacts.find_all_candidates(
+                        lead["company_domain"], args.hunter_api_key, args.hunter_min_confidence
+                    )
+                note_bodies_by_index[i] = bd_agent._build_hubspot_note_body(
+                    lead, contact, warm_paths.get(i), args, other_candidates, common_ground.get(i)
                 )
-            note_bodies_by_index[i] = bd_agent._build_hubspot_note_body(
-                lead, contact, warm_paths.get(i), args, other_candidates, common_ground.get(i)
-            )
+            except Exception as exc:
+                print(
+                    f"[Warning: could not compose HubSpot note for {lead.get('company_name') or 'a lead'} "
+                    f"— {exc}. Its Company/Contact will still sync, just without a note.]"
+                )
 
         hubspot_successes, hubspot_failures, hubspot_contact_warnings, hubspot_note_warnings = hubspot_sync.push_leads_to_hubspot(
             enriched, args.hubspot_api_key, args.hubspot_outreach_property, args.hubspot_no_call_property,
