@@ -32,6 +32,7 @@ import os
 import queue
 import sys
 import threading
+import time
 import tkinter as tk
 from tkinter import messagebox, scrolledtext, ttk
 
@@ -99,6 +100,22 @@ class App(tk.Tk):
         self.hubspot_no_call_property_var = tk.StringVar(
             value=self.config_data.get("hubspot_no_call_property", hubspot_sync.DEFAULT_NO_COLD_CALL_PROPERTY)
         )
+        # Batch mode: tick any combination of these to run them one after
+        # another in a single background pass via "Run Selected Searches",
+        # instead of clicking each "Search ..." button separately and
+        # waiting for it to finish. Independent of the four individual
+        # buttons, which still run just one search each as before.
+        self.conf_batch_var = tk.BooleanVar(value=False)
+        self.trial_batch_var = tk.BooleanVar(value=False)
+        self.phase_batch_var = tk.BooleanVar(value=False)
+        self.sweep_batch_var = tk.BooleanVar(value=False)
+        self._batch_running = False
+        # Elapsed-time indicator (see _start_timer()/_stop_timer(), hooked
+        # into _set_run_buttons_state()) — the user's own request, so
+        # there's a visible sign the program is actually working during a
+        # long paid search, not frozen.
+        self._run_start_time = None
+        self._timer_running = False
         self._build_ui()
         self.after(100, self._poll_log_queue)
 
@@ -181,6 +198,9 @@ class App(tk.Tk):
             conf_frame, text="Open Conference Report", command=self.open_conference_report, state="disabled"
         )
         self.conf_open_button.pack(side="left", **pad)
+        ttk.Checkbutton(conf_frame, text="Include in batch run", variable=self.conf_batch_var).pack(
+            side="left", **pad
+        )
 
         trial_frame = ttk.LabelFrame(scroll_frame, text="Trial signals search (ClinicalTrials.gov + SEC EDGAR + press releases — free, no LLM)")
         trial_frame.pack(fill="x", **pad)
@@ -190,6 +210,9 @@ class App(tk.Tk):
             trial_frame, text="Open Trial Signals Report", command=self.open_trial_signals_report, state="disabled"
         )
         self.trial_open_button.pack(side="left", **pad)
+        ttk.Checkbutton(trial_frame, text="Include in batch run", variable=self.trial_batch_var).pack(
+            side="left", **pad
+        )
 
         phase_frame = ttk.LabelFrame(
             scroll_frame, text="Phase transitions search (deep web search — LinkedIn, biotech news, blogs — costs API usage)"
@@ -203,6 +226,9 @@ class App(tk.Tk):
             phase_frame, text="Open Phase Transition Report", command=self.open_phase_transition_report, state="disabled"
         )
         self.phase_open_button.pack(side="left", **pad)
+        ttk.Checkbutton(phase_frame, text="Include in batch run", variable=self.phase_batch_var).pack(
+            side="left", **pad
+        )
 
         sweep_frame = ttk.LabelFrame(
             scroll_frame,
@@ -216,6 +242,20 @@ class App(tk.Tk):
             sweep_frame, text="Open Signal Sweep Report", command=self.open_signal_sweep_report, state="disabled"
         )
         self.sweep_open_button.pack(side="left", **pad)
+        ttk.Checkbutton(sweep_frame, text="Include in batch run", variable=self.sweep_batch_var).pack(
+            side="left", **pad
+        )
+
+        batch_frame = ttk.Frame(scroll_frame)
+        batch_frame.pack(anchor="w", fill="x", **pad)
+        self.run_selected_button = ttk.Button(
+            batch_frame, text="Run Selected Searches", command=self.on_run_selected
+        )
+        self.run_selected_button.pack(side="left")
+        ttk.Label(
+            batch_frame,
+            text="(runs every ticked \"Include in batch run\" search above, one after another)",
+        ).pack(side="left", padx=(6, 0))
 
         self.new_search_button = ttk.Button(scroll_frame, text="New Search", command=self.on_new_search)
         self.new_search_button.pack(anchor="w", **pad)
@@ -226,6 +266,10 @@ class App(tk.Tk):
         # being squeezed to nothing by however much content is above it.
         log_frame = ttk.LabelFrame(self, text="Progress")
         log_frame.pack(side="bottom", fill="both", expand=True, **pad)
+        self.status_var = tk.StringVar(value="Idle")
+        ttk.Label(log_frame, textvariable=self.status_var, font=("TkDefaultFont", 9, "bold")).pack(
+            anchor="w", padx=4, pady=(4, 0)
+        )
         self.log_text = scrolledtext.ScrolledText(log_frame, height=14, state="disabled", wrap="word")
         self.log_text.pack(fill="both", expand=True)
 
@@ -314,38 +358,74 @@ class App(tk.Tk):
                 elif kind == "conference_done":
                     self.conference_report_path = payload
                     self.conf_open_button.configure(state="normal")
-                    self._set_run_buttons_state("normal")
+                    if not self._batch_running:
+                        self._set_run_buttons_state("normal")
                 elif kind == "trial_signals_done":
                     self.trial_signals_report_path = payload
                     self.trial_open_button.configure(state="normal")
-                    self._set_run_buttons_state("normal")
+                    if not self._batch_running:
+                        self._set_run_buttons_state("normal")
                 elif kind == "phase_transition_done":
                     self.phase_transition_report_path = payload
                     self.phase_open_button.configure(state="normal")
-                    self._set_run_buttons_state("normal")
+                    if not self._batch_running:
+                        self._set_run_buttons_state("normal")
                 elif kind == "signal_sweep_done":
                     self.signal_sweep_report_path = payload
                     self.sweep_open_button.configure(state="normal")
-                    self._set_run_buttons_state("normal")
+                    if not self._batch_running:
+                        self._set_run_buttons_state("normal")
                 elif kind == "error":
-                    self._set_run_buttons_state("normal")
+                    if not self._batch_running:
+                        self._set_run_buttons_state("normal")
                 elif kind == "banner":
                     self.calendar_var.set(payload)
                     self.refresh_dates_button.configure(state="normal")
+                elif kind == "batch_done":
+                    self._batch_running = False
+                    self._set_run_buttons_state("normal")
         except queue.Empty:
             pass
         self.after(100, self._poll_log_queue)
 
     def _set_run_buttons_state(self, state: str) -> None:
-        # All four searches share one log window and can't usefully run at
-        # the same time (Tkinter widgets are only safe to touch from the
-        # main thread, and there's only one background-thread slot in use
-        # at once) — disable all four while any one is running, re-enable
-        # all four when it finishes, regardless of which one was clicked.
+        # All four searches (plus the batch "Run Selected" button) share one
+        # log window and can't usefully run at the same time (Tkinter
+        # widgets are only safe to touch from the main thread, and there's
+        # only one background-thread slot in use at once) — disable all of
+        # them while any one is running, re-enable all when it finishes,
+        # regardless of which one was clicked.
         self.conf_run_button.configure(state=state)
         self.trial_run_button.configure(state=state)
         self.phase_run_button.configure(state=state)
         self.sweep_run_button.configure(state=state)
+        self.run_selected_button.configure(state=state)
+        # Piggybacks the elapsed-time indicator on this same disable/enable
+        # transition, since every run path (single-search or batch) already
+        # calls this at exactly the moments a run starts and ends.
+        if state == "disabled":
+            self._start_timer()
+        else:
+            self._stop_timer()
+
+    def _start_timer(self) -> None:
+        self._run_start_time = time.time()
+        self._timer_running = True
+        self._tick_timer()
+
+    def _stop_timer(self) -> None:
+        self._timer_running = False
+        if self._run_start_time is not None:
+            elapsed = int(time.time() - self._run_start_time)
+            self.status_var.set(f"Finished — took {elapsed}s")
+        self._run_start_time = None
+
+    def _tick_timer(self) -> None:
+        if not self._timer_running or self._run_start_time is None:
+            return
+        elapsed = int(time.time() - self._run_start_time)
+        self.status_var.set(f"Running... {elapsed}s elapsed")
+        self.after(1000, self._tick_timer)
 
     def _current_form(self) -> dict:
         form = {key: var.get() for key, var in self.field_vars.items()}
@@ -538,6 +618,130 @@ class App(tk.Tk):
         finally:
             sys.stdout, sys.stderr = old_stdout, old_stderr
 
+    def _batch_search_defs(self) -> list:
+        """One entry per search, in the fixed order they'll run in a batch
+        (conferences -> trial signals -> phase transitions -> signal
+        sweep) — used by on_run_selected()/_run_selected_in_background() to
+        avoid four near-identical copies of the same run logic. Built as a
+        method (not a module-level constant) since it needs to close over
+        widgets that only exist after _build_ui() has run."""
+        return [
+            {
+                "label": "Conference search",
+                "selected_var": self.conf_batch_var,
+                "needs_anthropic": True,
+                "build_args": build_conference_args,
+                "pipeline": run_conference_pipeline,
+                "invalid_msg": "Year(s) and Hunter min confidence must be numbers.",
+                "done_kind": "conference_done",
+                "open_button": self.conf_open_button,
+            },
+            {
+                "label": "Trial signals search",
+                "selected_var": self.trial_batch_var,
+                "needs_anthropic": False,
+                "build_args": build_trial_signals_args,
+                "pipeline": run_trial_signals_pipeline,
+                "invalid_msg": "Hunter min confidence must be a number.",
+                "done_kind": "trial_signals_done",
+                "open_button": self.trial_open_button,
+            },
+            {
+                "label": "Phase transitions search",
+                "selected_var": self.phase_batch_var,
+                "needs_anthropic": True,
+                "build_args": build_phase_transition_args,
+                "pipeline": run_phase_transition_pipeline,
+                "invalid_msg": "Search window (days) and Hunter min confidence must be numbers.",
+                "done_kind": "phase_transition_done",
+                "open_button": self.phase_open_button,
+            },
+            {
+                "label": "Signal sweep search",
+                "selected_var": self.sweep_batch_var,
+                "needs_anthropic": True,
+                "build_args": build_signal_sweep_args,
+                "pipeline": run_signal_sweep_pipeline,
+                "invalid_msg": "Search window (days) and Hunter min confidence must be numbers.",
+                "done_kind": "signal_sweep_done",
+                "open_button": self.sweep_open_button,
+            },
+        ]
+
+    def on_run_selected(self) -> None:
+        selected = [s for s in self._batch_search_defs() if s["selected_var"].get()]
+        if not selected:
+            messagebox.showinfo(
+                "Nothing selected", 'Tick "Include in batch run" next to at least one search above first.'
+            )
+            return
+
+        form = self._current_form()
+        missing_key_for = [s["label"] for s in selected if s["needs_anthropic"] and not form["anthropic_api_key"].strip()]
+        if missing_key_for:
+            messagebox.showerror(
+                "Missing key",
+                "These selected searches need your Anthropic API key: " + ", ".join(missing_key_for),
+            )
+            return
+
+        self._save_form(form)
+
+        built = []
+        for s in selected:
+            try:
+                args = s["build_args"](form)
+            except ValueError:
+                messagebox.showerror("Invalid input", f"{s['label']}: {s['invalid_msg']}")
+                return
+            built.append((s, args))
+
+        if not self._outbox_ok(built[0][1]):
+            return
+
+        if form["anthropic_api_key"].strip():
+            os.environ["ANTHROPIC_API_KEY"] = form["anthropic_api_key"].strip()
+
+        self._batch_running = True
+        self._set_run_buttons_state("disabled")
+        for s in selected:
+            s["open_button"].configure(state="disabled")
+        self._clear_log()
+
+        threading.Thread(target=self._run_selected_in_background, args=(built,), daemon=True).start()
+
+    def _run_selected_in_background(self, built: list) -> None:
+        # Runs every selected search one after another on this single
+        # background thread/stdout-redirect (see the module docstring on
+        # why only one thread slot is ever in use) — one search's failure
+        # is logged and the rest still run, same "don't lose the others"
+        # posture as every other multi-source loop in this tool
+        # (pr_wire_feeds.py, clinicaltrials_gov.py, etc.).
+        old_stdout, old_stderr = sys.stdout, sys.stderr
+        writer = QueueWriter(self.log_queue)
+        sys.stdout = writer
+        sys.stderr = writer
+        try:
+            for s, args in built:
+                self.log_queue.put(("text", f"\n\n===== Running: {s['label']} =====\n\n"))
+                try:
+                    report_path = s["pipeline"](args)
+                    self.log_queue.put(("text", f"\n\nDone! {s['label']} report saved to: {report_path.resolve()}\n"))
+                    self.log_queue.put((s["done_kind"], report_path))
+                except PermissionError as exc:
+                    msg = (
+                        f"Could not save the report — '{exc.filename or args.output}' is open in "
+                        "another program (e.g. Word, Notepad, Excel) or is set to read-only. "
+                        "Close it (or right-click it, Properties, and untick Read-only), then run "
+                        "this search again."
+                    )
+                    self.log_queue.put(("text", f"\n\nError in {s['label']}: {msg}\n"))
+                except Exception as exc:  # this one search's failure shouldn't skip the rest of the batch
+                    self.log_queue.put(("text", f"\n\nError in {s['label']}: {exc}\n"))
+        finally:
+            sys.stdout, sys.stderr = old_stdout, old_stderr
+            self.log_queue.put(("batch_done", None))
+
     def _report_permission_error(self, exc: PermissionError, args) -> None:
         # The most common real-world cause: the previous report is still
         # open in Word/Notepad/Excel, which locks the file on Windows.
@@ -580,13 +784,22 @@ class App(tk.Tk):
             sys.stdout, sys.stderr = old_stdout, old_stderr
 
     def on_new_search(self) -> None:
-        """Reset every search-parameter field to its default and clear the
+        """Blank every search-parameter field (not reset to the sample
+        defaults shown on first launch — the user's own request, so
+        leftover sample text like "ASCO GU" or "bladder cancer" never
+        silently carries into a next, different search) and clear the
         progress log/report state, so the window looks like a fresh launch
         without touching the saved API keys (those stay filled in)."""
-        for key, _label, default, _width in self.FIELDS:
-            self.field_vars[key].set(default)
+        for key in self.field_vars:
+            self.field_vars[key].set("")
+
+        self.conf_batch_var.set(False)
+        self.trial_batch_var.set(False)
+        self.phase_batch_var.set(False)
+        self.sweep_batch_var.set(False)
 
         self._clear_log()
+        self.status_var.set("Idle")
 
         self.conference_report_path = None
         self.trial_signals_report_path = None

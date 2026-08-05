@@ -823,6 +823,48 @@ there is no `raw_response` to fall back to if something goes wrong — see
   could check this change; the user should confirm the scrolling/dialog
   actually behave as intended on their own machine.
 
+  **Batch mode: run several searches in one pass.** Each of the four
+  search frames got an "Include in batch run" checkbox
+  (`self.conf_batch_var`/`trial_batch_var`/`phase_batch_var`/`sweep_batch_var`)
+  and a new "Run Selected Searches" button (`on_run_selected()`) runs every
+  ticked one, one after another, on the same background thread/stdout
+  redirect the individual "Search ..." buttons already use — added at the
+  user's request to avoid clicking and waiting for each search
+  individually. `_batch_search_defs()` is a small per-search table (build-
+  args function, pipeline function, whether it needs the Anthropic key,
+  its "done" queue-message kind, its Open-report button) that both
+  `on_run_selected()` and `_run_selected_in_background()` iterate over,
+  instead of four near-duplicate copies of the run logic. One search
+  failing doesn't stop the batch — the exception is logged and the loop
+  moves to the next selected search, same "don't lose the others" posture
+  as every other multi-source loop in this tool. `self._batch_running`
+  suppresses `_poll_log_queue()`'s normal per-search button re-enable
+  (each individual `..._done`/`error` queue kind would otherwise re-enable
+  all four run buttons the moment the *first* search in the batch
+  finishes) until a new `"batch_done"` kind fires at the very end. The
+  four individual "Search ..." buttons are unchanged and still run just
+  one search immediately, exactly as before — batch mode is strictly
+  additive.
+
+  **"New Search" now blanks every field instead of resetting to the
+  sample defaults** (e.g. "ASCO GU", "bladder cancer") shown on first
+  launch — the user's own request, since silently reverting to sample
+  values reads as though a new search inherited leftover parameters from
+  the last one. `on_new_search()` now sets every `field_vars` entry to
+  `""` rather than iterating `FIELDS`' `default` column; those defaults
+  still exist and still act as the very first launch's placeholder text
+  (from `self.config_data.get(key, default)` in `_build_ui()`), just not
+  as a value "New Search" reverts to later.
+
+  **A running-time indicator** (`self.status_var`, a label above the
+  Progress log) — the user's own request, so a long paid search visibly
+  shows it's still working rather than looking frozen. `_start_timer()`/
+  `_stop_timer()`/`_tick_timer()` are hooked into `_set_run_buttons_state()`
+  itself (called at exactly the moments any run starts/ends, single-search
+  or batch) rather than duplicated at every call site: disabling the run
+  buttons starts a `self.after(1000, ...)` tick loop showing "Running...
+  Ns elapsed"; re-enabling them stops it and shows "Finished — took Ns".
+
   `build_conference_args()`'s `conference` field splits on **commas**, not
   whitespace. It used to split on whitespace, which silently broke a
   single-entry conference name containing its own space — typing "ASCO GU"
