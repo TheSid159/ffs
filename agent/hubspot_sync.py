@@ -56,14 +56,13 @@ DEFAULT_OUTREACH_PROPERTY = "outreach_status"
 DECLINED_VALUE = "Declined"
 CONTACTED_VALUE = "Contacted"
 
-# Best-guess internal name/value, following the same HubSpot auto-slugify
-# pattern already confirmed for Outreach Status ("Outreach Status" ->
-# "outreach_status") — the user gave us the display label ("Channel
-# Methods Do Not Call") but not a confirmed internal name or the "Yes"
-# option's actual backend value. Override via --hubspot-no-call-property
-# if HubSpot generated something different; verify with
-# test_hubspot_connection.py the same way Outreach Status was confirmed.
-DEFAULT_NO_COLD_CALL_PROPERTY = "channel_methods_do_not_call"
+# Confirmed against the user's live account (a real run's PATCH failed with
+# PROPERTY_DOESNT_EXIST on the original best guess, "channel_methods_do_not_call"
+# — HubSpot did not auto-slugify the display label "Channel Methods Do Not
+# Call" the way it did for Outreach Status; the real internal name is
+# "do_not_call"). Override via --hubspot-no-call-property if a different
+# account generated something else.
+DEFAULT_NO_COLD_CALL_PROPERTY = "do_not_call"
 NO_COLD_CALL_YES_VALUE = "Yes"
 
 

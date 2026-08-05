@@ -1567,7 +1567,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--hubspot-no-call-property",
         default=os.environ.get("HUBSPOT_NO_CALL_PROPERTY", hubspot_sync.DEFAULT_NO_COLD_CALL_PROPERTY),
         help="Internal name of the HubSpot Company property for 'Channel Methods Do Not Call' "
-        f"(default: {hubspot_sync.DEFAULT_NO_COLD_CALL_PROPERTY!r}, a best guess from the display label — "
+        f"(default: {hubspot_sync.DEFAULT_NO_COLD_CALL_PROPERTY!r}, confirmed against a live account — "
         "override if yours came out different). Every Company this tool creates/updates gets this set "
         "to \"Yes\" — every lead here already has a specific trigger and/or possible warm-path intro, "
         "so none of them should get a vanilla cold call. Pass an empty string to disable entirely.",

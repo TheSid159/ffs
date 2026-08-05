@@ -1336,12 +1336,21 @@ email or a warm intro instead. `upsert_company()`/`sync_lead()`/
 (default `DEFAULT_NO_COLD_CALL_PROPERTY`) — pass an empty string to
 disable it for a given call, or override the property name via
 `--hubspot-no-call-property` (CLI/env `HUBSPOT_NO_CALL_PROPERTY`) or the
-GUI's Settings dialog. Like `outreach_status`, `channel_methods_do_not_call`
-is a **best guess** at HubSpot's auto-generated internal name from the
-display label the user gave us ("Channel Methods Do Not Call") — not yet
-confirmed against a live account the way `outreach_status` was;
-`test_hubspot_connection.py` now prompts for and verifies this property
-too, the same way, so it can be confirmed/corrected the same way.
+GUI's Settings dialog. Unlike `outreach_status`, HubSpot did **not**
+auto-slugify the display label "Channel Methods Do Not Call" into
+`channel_methods_do_not_call` the way it did for "Outreach Status" ->
+`outreach_status` — that original best guess was confirmed wrong by a
+real run's `PATCH` failing with `PROPERTY_DOESNT_EXIST` (all 4 leads in
+that run failed to sync at all, since HubSpot rejects the whole
+properties payload atomically when one property name is invalid — see
+`test_hubspot_connection.py`'s "double-check its internal name" note).
+The user found the real internal name in their account's property
+settings: **`do_not_call`**, now `DEFAULT_NO_COLD_CALL_PROPERTY`. Lesson
+for next time a property's internal name is needed: don't assume
+HubSpot's auto-slugify pattern holds for every property — some display
+labels apparently don't slugify to what you'd expect, so confirm via
+`test_hubspot_connection.py` or the property's own detail page rather
+than guessing from the label.
 
 **Only ever fires for leads that carry a `company_domain`** — which the
 free trial-signals search's three sources never populate
