@@ -1375,6 +1375,12 @@ def _build_hubspot_note_body(
             who = f" ({g.person_name})" if g.person_name else ""
             kind_label = "background includes" if g.kind == "affiliation" else "based in"
             parts.append(f"- {html.escape(owner_label)} {kind_label} {html.escape(g.detail)}{html.escape(who)}<br>")
+    else:
+        # Always shown, even empty — a note that just omits this section
+        # silently is indistinguishable from "the check never ran at all";
+        # this makes clear it was checked and came up empty, same reasoning
+        # as the report's explicit "not publicly available" contact line.
+        parts.append("<strong>Possible common ground:</strong> none found.<br>")
 
     subject, body = draft_email(lead, contact, args)
     parts.append(f"<br><strong>Draft email — Subject:</strong> {html.escape(subject)}<br>")

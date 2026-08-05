@@ -1280,6 +1280,18 @@ lower-confidence 'possible match — unverified' tier, never blended into
 the same list as a direct match") — just applied to a second, related
 feature.
 
+**The HubSpot note always shows this section, even when empty** — the
+user's own request. A note that just omits the section when there's no
+match is indistinguishable from the check never having run at all; a note
+opened days later gives no way to tell "checked, nothing found" from
+"never checked." `_build_hubspot_note_body()`'s `else` branch renders
+`"Possible common ground: none found."` explicitly rather than skipping
+the section — deliberately asymmetric with `render_report()`'s Markdown
+report (which still omits the section when empty, unchanged), since the
+report is read as one continuous document where an absent section already
+reads clearly as "nothing here," while a HubSpot note is read standalone,
+out of that context.
+
 **Data source, side A (you/your team): a LinkedIn `Profile.csv` export**
 (Settings & Privacy -> Data privacy -> Get a copy of your data -> Profile
 — a different export file than Connections.csv, which `warm_connections.py`
