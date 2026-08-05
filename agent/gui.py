@@ -470,8 +470,8 @@ class App(tk.Tk):
         self._save_form(form)
         try:
             args = build_conference_args(form)
-        except ValueError:
-            messagebox.showerror("Invalid input", "Year(s) and Hunter min confidence must be numbers.")
+        except ValueError as exc:
+            messagebox.showerror("Invalid input", str(exc))
             return
         if not self._outbox_ok(args):
             return
@@ -509,8 +509,8 @@ class App(tk.Tk):
         self._save_form(form)
         try:
             args = build_trial_signals_args(form)
-        except ValueError:
-            messagebox.showerror("Invalid input", "Hunter min confidence must be a number.")
+        except ValueError as exc:
+            messagebox.showerror("Invalid input", str(exc))
             return
         if not self._outbox_ok(args):
             return
@@ -547,8 +547,8 @@ class App(tk.Tk):
         self._save_form(form)
         try:
             args = build_phase_transition_args(form)
-        except ValueError:
-            messagebox.showerror("Invalid input", "Search window (days) and Hunter min confidence must be numbers.")
+        except ValueError as exc:
+            messagebox.showerror("Invalid input", str(exc))
             return
         if not self._outbox_ok(args):
             return
@@ -587,8 +587,8 @@ class App(tk.Tk):
         self._save_form(form)
         try:
             args = build_signal_sweep_args(form)
-        except ValueError:
-            messagebox.showerror("Invalid input", "Search window (days) and Hunter min confidence must be numbers.")
+        except ValueError as exc:
+            messagebox.showerror("Invalid input", str(exc))
             return
         if not self._outbox_ok(args):
             return
@@ -632,7 +632,6 @@ class App(tk.Tk):
                 "needs_anthropic": True,
                 "build_args": build_conference_args,
                 "pipeline": run_conference_pipeline,
-                "invalid_msg": "Year(s) and Hunter min confidence must be numbers.",
                 "done_kind": "conference_done",
                 "open_button": self.conf_open_button,
             },
@@ -642,7 +641,6 @@ class App(tk.Tk):
                 "needs_anthropic": False,
                 "build_args": build_trial_signals_args,
                 "pipeline": run_trial_signals_pipeline,
-                "invalid_msg": "Hunter min confidence must be a number.",
                 "done_kind": "trial_signals_done",
                 "open_button": self.trial_open_button,
             },
@@ -652,7 +650,6 @@ class App(tk.Tk):
                 "needs_anthropic": True,
                 "build_args": build_phase_transition_args,
                 "pipeline": run_phase_transition_pipeline,
-                "invalid_msg": "Search window (days) and Hunter min confidence must be numbers.",
                 "done_kind": "phase_transition_done",
                 "open_button": self.phase_open_button,
             },
@@ -662,7 +659,6 @@ class App(tk.Tk):
                 "needs_anthropic": True,
                 "build_args": build_signal_sweep_args,
                 "pipeline": run_signal_sweep_pipeline,
-                "invalid_msg": "Search window (days) and Hunter min confidence must be numbers.",
                 "done_kind": "signal_sweep_done",
                 "open_button": self.sweep_open_button,
             },
@@ -691,8 +687,8 @@ class App(tk.Tk):
         for s in selected:
             try:
                 args = s["build_args"](form)
-            except ValueError:
-                messagebox.showerror("Invalid input", f"{s['label']}: {s['invalid_msg']}")
+            except ValueError as exc:
+                messagebox.showerror("Invalid input", f"{s['label']}: {exc}")
                 return
             built.append((s, args))
 

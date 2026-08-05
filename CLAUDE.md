@@ -856,6 +856,30 @@ there is no `raw_response` to fall back to if something goes wrong — see
   (from `self.config_data.get(key, default)` in `_build_ui()`), just not
   as a value "New Search" reverts to later.
 
+  **This blank reset exposed a real, pre-existing bug**: every
+  `build_*_args()` function in `gui_logic.py` silently substituted the
+  sample launch values (`conference=["ASCO GU"]`, `year=[2025, 2026]`,
+  `indication="bladder cancer"`, `phase="Phase II"`,
+  `days`/`sweep_days=60`/`30`) whenever the corresponding field was blank.
+  Harmless before this change — every field always had pre-filled sample
+  text, so the fallback was dead code — but a real run left the
+  Conference field blank after "New Search" and the tool silently ran
+  "ASCO GU" anyway with no indication anything had been substituted (the
+  user's exact report: "started referencing ASCO GU even though the
+  conference was blank"). Fixed by making these search-defining fields
+  (conference, year, indication, phase, the two days fields) required —
+  each `build_*_args()` now raises `ValueError` with a specific message
+  ("Indication is required.", etc.) instead of silently substituting, and
+  `gui.py`'s `except ValueError as exc: messagebox.showerror(...,
+  str(exc))` surfaces that specific message rather than a generic
+  hardcoded one (previously discarded the real exception entirely).
+  `sender_name`/`sender_title`/`sender_company`/`hunter_min_confidence`
+  deliberately keep their fallback behavior — their defaults are either an
+  obvious, unmistakable placeholder (`"[Your Name]"`) or a genuinely
+  reasonable setting (`hunter_min_confidence=90`, `sender_company=
+  "Elevate Imaging"`, correct for this tool's one real user near-always),
+  not a different, unrelated search topic silently swapped in.
+
   **A running-time indicator** (`self.status_var`, a label above the
   Progress log) — the user's own request, so a long paid search visibly
   shows it's still working rather than looking frozen. `_start_timer()`/

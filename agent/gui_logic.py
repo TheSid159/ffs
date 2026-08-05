@@ -123,20 +123,40 @@ def _linkedin_connections_fields(form: dict) -> dict:
 def build_conference_args(form: dict) -> argparse.Namespace:
     """Build the Namespace for the conference search (bd_agent.run_research()
     and friends) from a plain dict of GUI form values. Raises ValueError on
-    bad numeric input so the caller can show a clean error dialog."""
+    bad/missing input so the caller can show a clean error dialog.
+
+    Conference/year/indication/phase are REQUIRED, not silently defaulted —
+    they used to fall back to the sample launch values ("ASCO GU", "bladder
+    cancer", etc.) when blank, which was harmless while every field always
+    had pre-filled sample text, but became a real, silent bug once "New
+    Search" started blanking every field: a real run left the Conference
+    field blank and still searched "ASCO GU" with no indication anything
+    had been substituted. Raising here surfaces a clear error dialog
+    instead (see gui.py's on_run_conferences()/on_run_selected())."""
     # Split on commas, not whitespace — several real conference names contain a
     # space themselves (e.g. "ASCO GU"), and whitespace-splitting silently
     # broke a single "ASCO GU" entry into two separate conferences ("ASCO",
     # "GU"), changing what was actually searched without any visible error.
-    conference = [c.strip() for c in form.get("conference", "").split(",") if c.strip()] or ["ASCO GU"]
-    year = [int(y) for y in form.get("year", "").split()] or [2025, 2026]
+    conference = [c.strip() for c in form.get("conference", "").split(",") if c.strip()]
+    if not conference:
+        raise ValueError("Conference(s) is required — enter at least one conference name.")
+    year_field = form.get("year", "").strip()
+    if not year_field:
+        raise ValueError("Year(s) is required.")
+    year = [int(y) for y in year_field.split()]
     hunter_min_confidence = int(form.get("hunter_min_confidence", "").strip() or 90)
-    indication = form.get("indication", "").strip() or "bladder cancer"
+    indication = form.get("indication", "").strip()
+    if not indication:
+        raise ValueError("Indication is required.")
 
     # Leaving the Output file field blank auto-names the report from the
     # search parameters (e.g. "bladder_cancer_ASCO_GU_2025_2026_leads_report.md")
     # instead of always overwriting the same generic "leads_report.md" —
     # typing an exact filename still overrides this.
+    phase = form.get("phase", "").strip()
+    if not phase:
+        raise ValueError("Phase is required.")
+
     output_field = form.get("output", "").strip()
     output = output_field or str(app_dir() / (bd_agent.default_output_basename(indication, conference, year) + ".md"))
 
@@ -144,7 +164,7 @@ def build_conference_args(form: dict) -> argparse.Namespace:
         conference=conference,
         year=year,
         indication=indication,
-        phase=form.get("phase", "").strip() or "Phase II",
+        phase=phase,
         sender_name=form.get("sender_name", "").strip() or "[Your Name]",
         sender_title=form.get("sender_title", "").strip() or "[Your Title]",
         sender_company=form.get("sender_company", "").strip() or "Elevate Imaging",
@@ -166,7 +186,9 @@ def build_trial_signals_args(form: dict) -> argparse.Namespace:
     conference/year/phase fields — those only apply to the conference
     search, a separate, independently-run pipeline (see CLAUDE.md)."""
     hunter_min_confidence = int(form.get("hunter_min_confidence", "").strip() or 90)
-    indication = form.get("indication", "").strip() or "bladder cancer"
+    indication = form.get("indication", "").strip()
+    if not indication:
+        raise ValueError("Indication is required.")
 
     output_field = form.get("output", "").strip()
     output = output_field or str(app_dir() / (bd_agent.default_trial_signals_basename(indication) + ".md"))
@@ -201,8 +223,13 @@ def build_phase_transition_args(form: dict) -> argparse.Namespace:
     Like trial-signals, no conference/year/phase fields — but unlike
     trial-signals, this one costs API usage (Claude-driven)."""
     hunter_min_confidence = int(form.get("hunter_min_confidence", "").strip() or 90)
-    indication = form.get("indication", "").strip() or "bladder cancer"
-    days = int(form.get("phase_transition_days", "").strip() or 60)
+    indication = form.get("indication", "").strip()
+    if not indication:
+        raise ValueError("Indication is required.")
+    days_field = form.get("phase_transition_days", "").strip()
+    if not days_field:
+        raise ValueError("Search window (days) is required.")
+    days = int(days_field)
 
     output_field = form.get("output", "").strip()
     output = output_field or str(app_dir() / (bd_agent.default_phase_transition_basename(indication) + ".md"))
@@ -245,8 +272,13 @@ def build_signal_sweep_args(form: dict) -> argparse.Namespace:
     the signal-sweep subparser, so render_report() can tell this search's
     Namespace apart from phase-transitions'."""
     hunter_min_confidence = int(form.get("hunter_min_confidence", "").strip() or 90)
-    indication = form.get("indication", "").strip() or "bladder cancer"
-    sweep_days = int(form.get("signal_sweep_days", "").strip() or 30)
+    indication = form.get("indication", "").strip()
+    if not indication:
+        raise ValueError("Indication is required.")
+    sweep_days_field = form.get("signal_sweep_days", "").strip()
+    if not sweep_days_field:
+        raise ValueError("Search window (days) is required.")
+    sweep_days = int(sweep_days_field)
 
     output_field = form.get("output", "").strip()
     output = output_field or str(app_dir() / (bd_agent.default_signal_sweep_basename(indication) + ".md"))
