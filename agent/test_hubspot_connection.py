@@ -55,12 +55,15 @@ try:
     )
     print(f"SUCCESS — Company created/updated, HubSpot ID: {company_id}")
     print('Go check HubSpot for a Company called "BD Agent Test Co" — its Outreach Status should say '
-          '"Contacted" and Channel Methods Do Not Call should say "Yes".')
+          '"Contacted" and Channel Methods Do Not Call should show as checked/Yes.')
 except hubspot_sync.HubSpotAPIError as exc:
     print(f"FAILED: {exc}")
     print("\nIf the error mentions a property not existing, double-check its internal name — "
           "it needs to be the Company object's internal name specifically, and the two properties "
-          "(Outreach Status, Channel Methods Do Not Call) can have different internal names.")
+          "(Outreach Status, Channel Methods Do Not Call) can have different internal names. If the "
+          "error instead says an INVALID_OPTION for a value like \"Yes\", the property is a boolean/"
+          "checkbox on this account — see hubspot_sync.NO_COLD_CALL_YES_VALUE (\"true\"/\"false\", not "
+          "a display label).")
     sys.exit(1)
 
 print("\nNow checking is_company_declined() (should be False, nothing's marked Declined)...")

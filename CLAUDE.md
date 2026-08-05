@@ -1394,6 +1394,18 @@ labels apparently don't slugify to what you'd expect, so confirm via
 `test_hubspot_connection.py` or the property's own detail page rather
 than guessing from the label.
 
+**The property's value is also account-specific, not just its name.**
+`NO_COLD_CALL_YES_VALUE` was originally `"Yes"` — a second real run then
+failed with `INVALID_OPTION` ("Yes was not one of the allowed options:
+[\"true\", \"false\", \"\"]"), because `do_not_call` is a boolean/checkbox
+property in this account, not an enumeration with display-label options.
+HubSpot boolean properties always take the literal string `"true"`/
+`"false"` over the API, regardless of what the checkbox itself is labeled
+in the UI — now `NO_COLD_CALL_YES_VALUE = "true"`. Same lesson as the
+property-name mixup above, just one level deeper: confirm both the
+property's internal name *and* its value type/options before assuming a
+human-readable label works over the API.
+
 **Only ever fires for leads that carry a `company_domain`** — which the
 free trial-signals search's three sources never populate
 (`clinicaltrials_gov.py`/`sec_edgar.py`/`pr_wire_feeds.py` all hardcode

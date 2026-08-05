@@ -63,7 +63,12 @@ CONTACTED_VALUE = "Contacted"
 # "do_not_call"). Override via --hubspot-no-call-property if a different
 # account generated something else.
 DEFAULT_NO_COLD_CALL_PROPERTY = "do_not_call"
-NO_COLD_CALL_YES_VALUE = "Yes"
+# "do_not_call" is a boolean/checkbox property in the user's account, not an
+# enumeration — a real run's PATCH failed with INVALID_OPTION on "Yes"
+# ("not one of the allowed options: [\"true\", \"false\", \"\"]"). HubSpot
+# boolean properties always take the literal strings "true"/"false", never
+# a display label, regardless of what the property's UI toggle is labeled.
+NO_COLD_CALL_YES_VALUE = "true"
 
 
 class HubSpotAPIError(Exception):
