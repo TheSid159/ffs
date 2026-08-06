@@ -297,13 +297,18 @@ one run on its own, more regular cadence (e.g. weekly) independent of
 conference timing — see "What this repository is" above for the fuller
 architecture discussion that led here.
 
-The nine signal types themselves are unchanged from their original
+The nine signal types themselves are largely unchanged from their original
 descriptions when they lived in the conference search: `funding`
 (financing rounds, IPOs, grants, licensing deals — Series B/C+ rounds and
 IPOs are the strongest version since imaging-heavy oncology trials are
 expensive and this often precedes an imaging-vendor RFP by a few months;
 also noting if proceeds are earmarked for a pivotal/registrational trial
-specifically), `leadership_change` (new CEO/CMO/CSO), `new_registration` (a
+specifically), `leadership_change` (any new C-suite executive — CEO, CMO,
+CSO, COO, CFO, CTO, or any other "Chief ... Officer" role, broadened from
+an original CEO/CMO/CSO-only scope per the user's own follow-up — a new
+executive in any C-suite seat is still a natural reason to (re-)introduce
+the CRO, not just the three most obviously clinical-facing titles),
+`new_registration` (a
 newly registered trial on ClinicalTrials.gov or an international
 equivalent — also listed in `agent/conferences.py` — surfacing a sponsor
 before their trial ever reaches a conference; also gets the same

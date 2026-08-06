@@ -526,10 +526,12 @@ signal_detail if the proceeds are specifically said to fund a pivotal/ \
 registrational trial, not just general runway.
 
 CATEGORY 2 — "leadership_change": companies working in {args.indication} \
-that recently appointed a new CEO, CMO, or CSO. This is directly useful for \
-BD outreach — a new executive is a natural reason to (re-)introduce \
-{args.sender_company}. Include the person's name, new title, and a URL to \
-the announcement.
+that recently appointed any new C-suite executive — CEO, CMO, CSO, COO, \
+CFO, CTO, Chief Business Officer, Chief Development Officer, Chief \
+Regulatory Officer, or any other "Chief ... Officer" role, not just the \
+three most obvious ones. This is directly useful for BD outreach — a new \
+executive is a natural reason to (re-)introduce {args.sender_company}. \
+Include the person's name, new title, and a URL to the announcement.
 
 CATEGORY 3 — "new_registration": newly registered trials in \
 {args.indication} on ClinicalTrials.gov or an international equivalent \
