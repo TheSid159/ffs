@@ -56,6 +56,7 @@ import anthropic
 import biosketch_matching
 import clinicaltrials_gov
 import conferences
+import ctis_eu
 import email_drafts
 import hubspot_sync
 import hunter_contacts
@@ -376,10 +377,11 @@ biomarkers) to biotech and pharmaceutical sponsors running clinical trials.
 Task — using web search, find companies in {args.indication} that are \
 transitioning, or have very recently transitioned, from a Phase 1 to a \
 Phase 2 trial, within roughly the last {args.days} days. A separate, \
-free, automated process already checks three fixed sources for this same \
-signal (ClinicalTrials.gov, SEC EDGAR 8-K/10-Q filings, and a handful of \
-press-release RSS feeds) and was just run before you started — your job \
-here is to go further and deeper than those fixed sources can: search \
+free, automated process already checks four fixed sources for this same \
+signal (ClinicalTrials.gov, SEC EDGAR 8-K/10-Q filings, a handful of \
+press-release RSS feeds, and EU CTIS new registrations) and was just run \
+before you started — your job here is to go further and deeper than \
+those fixed sources can: search \
 LinkedIn (company pages, executive posts), biotech/pharma news sites (e.g. \
 Endpoints News, Fierce Biotech, BioPharma Dive, STAT News), company blogs \
 and press pages, hospital/university press releases, investor-update \
@@ -801,13 +803,17 @@ def parse_research_output(text: str):
 def run_trial_signals_search(args: argparse.Namespace) -> list:
     """Aggregate every free, deterministic (no-LLM) trial-signal lead:
     ClinicalTrials.gov (4 signals — see clinicaltrials_gov.py), SEC EDGAR
-    8-K/10-Q filings, and press-release RSS feeds. This is the whole point
-    of splitting it from the conference search (run_research(), above): none
-    of these three sources costs API money or uses Claude at all, so this
-    can be run as often as wanted — daily, hourly — independent of the
-    conference search's cost. Each source is independently toggleable via
-    --no-ctgov/--no-secedgar/--no-prwire and fails independently: one
-    source being unreachable never loses leads from the other two.
+    8-K/10-Q filings, press-release RSS feeds, and EU CTIS new
+    registrations (see ctis_eu.py — the least-trustworthy of the four,
+    built on an unofficial/undocumented endpoint, on by default but the
+    first one to turn off with --no-ctiseu if it starts causing trouble).
+    This is the whole point of splitting it from the conference search
+    (run_research(), above): none of these sources costs API money or uses
+    Claude at all, so this can be run as often as wanted — daily, hourly —
+    independent of the conference search's cost. Each source is
+    independently toggleable via --no-ctgov/--no-secedgar/--no-prwire/
+    --no-ctiseu and fails independently: one source being unreachable
+    never loses leads from the others.
     """
     leads = []
 
@@ -830,6 +836,12 @@ def run_trial_signals_search(args: argparse.Namespace) -> list:
         pr_leads = pr_wire_feeds.find_leads(args.indication)
         print(f"[Found {len(pr_leads)} lead(s) via press-release feeds]", file=sys.stderr)
         leads += pr_leads
+
+    if not args.no_ctiseu:
+        print("Checking EU CTIS for new EU/EEA trial registrations (unofficial endpoint — see CLAUDE.md)...", file=sys.stderr)
+        ctiseu_leads = ctis_eu.find_leads(args.indication)
+        print(f"[Found {len(ctiseu_leads)} lead(s) via EU CTIS]", file=sys.stderr)
+        leads += ctiseu_leads
 
     return leads
 
@@ -1117,8 +1129,10 @@ def render_report(
         scope_line = (
             "**Scope searched:** ClinicalTrials.gov (trial milestones approaching, recently "
             "completed trials, new Phase 2 filings by returning sponsors, trial site expansions), "
-            "SEC EDGAR (8-K/10-Q filings), and press-release RSS feeds — no LLM research involved, "
-            "free and deterministic, and independent of the other searches."
+            "SEC EDGAR (8-K/10-Q filings), press-release RSS feeds, and EU CTIS (new EU/EEA trial "
+            "registrations — an unofficial, undocumented endpoint, less reliable than the other "
+            "three; see CLAUDE.md) — no LLM research involved, free and deterministic, and "
+            "independent of the other searches."
         )
 
     lines = [
@@ -1479,11 +1493,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     types (trial results, conference highlights — costs real API usage,
     meant to run whenever a relevant conference is coming up);
     "trial-signals" is the free, deterministic ClinicalTrials.gov/SEC
-    EDGAR/press-release-RSS check (no LLM, no API cost, safe to run daily
-    or hourly); "phase-transitions" is a narrower Claude-driven deep web
-    search focused only on Phase 1-to-Phase 2 transition signals, with much
-    broader source reach than trial-signals' three fixed sources (LinkedIn,
-    biotech news, blogs, hospital/university press) — also costs API
+    EDGAR/press-release-RSS/EU-CTIS check (no LLM, no API cost, safe to run
+    daily or hourly); "phase-transitions" is a narrower Claude-driven deep
+    web search focused only on Phase 1-to-Phase 2 transition signals, with
+    much broader source reach than trial-signals' four fixed sources
+    (LinkedIn, biotech news, blogs, hospital/university press) — also costs API
     usage; "signal-sweep" is Claude-driven web research across the other
     nine BD signal types (funding, leadership changes, new registrations,
     regulatory designations/milestones, trial expansions, protocol
@@ -1649,13 +1663,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip the PR Newswire/Business Wire/GlobeNewswire RSS check (free, no API key, no LLM involved).",
     )
+    trial_parser.add_argument(
+        "--no-ctiseu",
+        action="store_true",
+        help="Skip the EU CTIS new-registration check (free, no API key, no LLM involved — but built on "
+        "an unofficial, undocumented endpoint, unlike the other three sources; see CLAUDE.md's "
+        "'EU CTIS integration' section before relying on it).",
+    )
 
     phase_parser = subparsers.add_parser(
         "phase-transitions",
         parents=[common],
         help="Claude-driven deep web search (LinkedIn, biotech news, blogs, hospital/university press) "
         "for Phase 1-to-Phase 2 transition signals only — costs API usage, broader source reach than "
-        "trial-signals' three fixed sources.",
+        "trial-signals' four fixed sources.",
     )
     phase_parser.add_argument(
         "--days",
@@ -1952,6 +1973,7 @@ def _run_phase_transitions_cli(args: argparse.Namespace) -> None:
     args.no_ctgov = False
     args.no_secedgar = False
     args.no_prwire = False
+    args.no_ctiseu = False
     known_leads = run_trial_signals_search(args)
 
     # Also fold in the signal-sweep search's own recent history (read from

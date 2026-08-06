@@ -128,7 +128,7 @@ trial-signals sources: `unittest.mock.patch` on `clinicaltrials_gov._get`,
 
 ## Architecture
 
-Sixteen modules, no application framework:
+Seventeen modules, no application framework:
 
 - **`agent/bd_agent.py`** — all four pipelines, plus everything shared
   between them (Hunter enrichment, email drafting, report/CSV rendering):
@@ -741,6 +741,89 @@ there is no `raw_response` to fall back to if something goes wrong — see
   explicitly excluded per the user's instruction, and the NDA/BLA-stage
   triggers (BICR re-reads, exploratory endpoint analyses, sNDA/sBLA
   filings) remain deferred — see Known gaps.
+
+### EU CTIS integration (free, but built on an unofficial endpoint — read this before touching it)
+
+`agent/ctis_eu.py` is the trial-signals search's fourth free source, added
+after the user asked to look into whether ISRCTN/WHO ICTRP/ChiCTR/jRCT/
+CTRI/ANZCTR/EU CTIS have real APIs — researched (see the "Registries to
+check" list in `agent/conferences.py`, already used by the signal-sweep
+search's `new_registration` category), and EU CTIS turned out to be the
+one with a genuinely workable (if unofficial) option: the EMA states CTIS
+"does not have a machine-readable interface for the public, only an API
+for EU member states," but the public CTIS search *website* itself calls
+real, reachable, unauthenticated JSON endpoints on `euclinicaltrials.eu` —
+`POST /ctis-public-api/search` and `GET /ctis-public-api/retrieve/{EUCT
+number}` — discovered via third-party tooling built against them, not
+published or supported by EMA for external use. None of the other six
+registries had anything comparable (WHO ICTRP's real-time web service
+exists but requires emailing `ictrpinfo@who.int` for credentials first;
+the rest had no confirmed public API at all) — see the chat history for
+the full per-registry writeup if that changes and one of them becomes
+worth building later.
+
+**This is the least-trustworthy source in the whole tool, and the code
+says so loudly.** Every other structured source here (ClinicalTrials.gov,
+SEC EDGAR) has its field-name mapping confirmed against official,
+versioned API documentation, even on the sources this dev sandbox's
+network policy couldn't reach live. `ctis_eu.py` could not get that same
+confirmation for *anything* — this sandbox also blocks `euclinicaltrials.eu`
+outright, and every secondary source found either didn't document the
+JSON shape or turned out to target the old, now-different CTIS portal (a
+stale, GitHub-archived scraper library built against Liferay-portlet HTML
+pages, not the current `euclinicaltrials.eu` JSON API at all). So
+`_trial_to_lead()`'s field names (`ctNumber`, `sponsorName`, `title`,
+`condition`, `status`, tried via `_first_present()`'s ordered-candidate
+fallback) are a **best-effort guess**, not a confirmed schema — flagged
+as such directly in the module docstring. `_euct_number_from()` at least
+sanity-checks that whatever we guessed as the identifier field actually
+matches the real EUCT-number format (`YYYY-NNNNNN-NN-NN`) before trusting
+it, so a wrong guess fails closed (skips the record) rather than
+fabricating a lead from noise.
+
+**Never fails silently — every failure mode prints a visible warning and
+returns `[]`** (network error, non-JSON response, or a response shape
+that doesn't match anything `_first_present()` was told to look for),
+same not-silent posture as `pr_wire_feeds.py`'s per-feed warnings, for
+the same reason: an unofficial endpoint changing without notice needs to
+be *obvious* the first time it happens, not indistinguishable from "no EU
+trials matched this run." On by default (unlike everything requiring an
+explicit opt-in elsewhere in this tool) since it's still free and
+additive when working, but `--no-ctiseu` (CLI) skips it entirely — reach
+for that if it starts printing warnings on every run and you'd rather not
+see them, without needing to also disable the three actually-reliable
+sources.
+
+**Periodic maintenance check — do this occasionally, not just when it
+breaks.** Because there's no changelog or notice channel for an
+unofficial endpoint, silence isn't proof it's fine. Periodically (e.g.
+whenever this file is opened for other reasons, or the user asks "is EU
+CTIS still working"):
+1. Run the trial-signals search once and check the log for
+   `[ctis_eu: ...]` warnings — if it's been silently returning 0 leads
+   every run for a while, that's the first sign, not proof of nothing
+   (rare in this therapeutic area is also plausible; the two aren't
+   distinguishable from the report alone). Ask the user whether *any*
+   new-registration lead has come from EU CTIS recently, ClinicalTrials.gov
+   comparison as a sanity check.
+2. Search the web for recent news/announcements from the EMA about CTIS
+   API changes, deprecations, or authentication requirements being added
+   to the public portal — e.g. "EMA CTIS API change [current year]",
+   "euclinicaltrials.eu API deprecated". EMA's own CTIS page
+   (`ema.europa.eu/en/human-regulatory-overview/research-development/
+   clinical-trials-human-medicines/clinical-trials-information-system`)
+   and the CTIS public portal's own release notes are the two places an
+   official change would actually get announced.
+3. If a live run is possible from wherever this is being checked (this
+   dev sandbox cannot — `euclinicaltrials.eu` is blocked by network
+   policy), the user opening the CTIS search page in a browser with
+   DevTools' Network tab open, running a real search, and pasting back
+   the actual request URL/body and one example response object is
+   *exactly* what's needed to replace the guessed field names in
+   `_trial_to_lead()` with confirmed ones — same pattern that fixed
+   `pr_wire_feeds.py`'s GlobeNewswire URL and both HubSpot property
+   mixups earlier this session. Don't guess a second time if real data is
+   available instead.
 
 - **`agent/seen_leads.py`** — local dedup so re-running doesn't resurface
   the same leads. `dedup_key()` deliberately prefers `company_domain` +

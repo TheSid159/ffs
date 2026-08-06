@@ -211,6 +211,7 @@ def build_trial_signals_args(form: dict) -> argparse.Namespace:
         no_ctgov=False,
         no_secedgar=False,
         no_prwire=False,
+        no_ctiseu=False,
         **_outbox_fields(form),
         **_hubspot_fields(form),
         **_linkedin_connections_fields(form),
@@ -496,6 +497,7 @@ def run_phase_transition_pipeline(args: argparse.Namespace) -> Path:
     args.no_ctgov = False
     args.no_secedgar = False
     args.no_prwire = False
+    args.no_ctiseu = False
     known_leads = bd_agent.run_trial_signals_search(args)
     signal_sweep_leads = seen_leads.recent_entries(
         app_dir() / "signal_sweep_seen_leads.json", within_days=args.days

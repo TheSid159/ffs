@@ -25,7 +25,7 @@ conference's timing and deserve a more regular check.
 
 ### 2. Trial signals search (free, deterministic — no LLM, no API cost)
 
-Three sources, none of them using Claude or costing anything, so this is
+Four sources, none of them using Claude or costing anything, so this is
 safe to run as often as you like (daily, even hourly):
 
 - **ClinicalTrials.gov** — a Phase 1 (or Phase 1/2) trial in your
@@ -41,16 +41,24 @@ safe to run as often as you like (daily, even hourly):
 - **Press-release RSS** (PR Newswire / Business Wire / GlobeNewswire) —
   press releases mentioning your indication, "Phase 1", and either
   "topline" or "Phase 2".
+- **EU CTIS** — newly registered/submitted trials in the EU/EEA matching
+  your indication. Unlike the other three, this runs on an *unofficial,
+  undocumented* endpoint (the EU doesn't publish a public API for this
+  registry) — it's on by default but the least reliable source here, and
+  could stop working without warning if the EU changes it. See
+  CLAUDE.md's "EU CTIS integration" section if it looks like it's stopped
+  finding anything.
 
 All are exact-match against real structured data or real filing/press-release
 text — never Claude's interpretation of what it found. Pass
-`--no-ctgov`/`--no-secedgar`/`--no-prwire` to skip any one of the three.
+`--no-ctgov`/`--no-secedgar`/`--no-prwire`/`--no-ctiseu` to skip any one of
+the four.
 
 ### 3. Phase transition search (Claude deep web search — costs API usage)
 
 A narrower, deeper version of the same signal the trial-signals search
 checks for (a company moving from Phase 1 to Phase 2), but instead of
-three fixed sources, Claude searches the open web — LinkedIn, biotech/pharma
+four fixed sources, Claude searches the open web — LinkedIn, biotech/pharma
 news sites, company blogs, hospital/university press, and anywhere else it
 finds — for the last N days (default 60). Two things make this different
 from a simple web search:
